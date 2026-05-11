@@ -1,8 +1,25 @@
+"""
+Acceptor 节点服务 —— 同时运行 Agent 分类器 + Paxos Acceptor
+
+启动方式（3个终端窗口）:
+  python agent_service.py --role security --port 8503 --id acceptor-1
+  python agent_service.py --role business --port 8504 --id acceptor-2
+  python agent_service.py --role general --port 8505 --id acceptor-3
+
+每个节点对外提供:
+  GET  /health         - 健康检查
+  POST /classify       - Agent 分类邮件
+  POST /paxos/prepare  - Paxos Prepare 阶段
+  POST /paxos/accept   - Paxos Accept 阶段
+  GET  /stats          - 节点统计
+  GET  /paxos/log      - Paxos 日志
+"""
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from agents.rule_agent import RuleAgent
-from agents.bayes_agent import BayesAgent
-from agents.lr_agent import LRAgent
+from agents.llm_agent import LLMAgent
+from paxos.acceptor import Acceptor
+from paxos.message import Message, MessageType
 import argparse
 import time
 import uuid
@@ -10,78 +27,157 @@ import uuid
 app = Flask(__name__)
 CORS(app)
 
-AGENT_MAP = {
-    "rule": lambda: RuleAgent(),
-    "bayes": lambda: BayesAgent(),
-    "lr": lambda: LRAgent()
-}
-
-agent_instance = None
-agent_type = None
+agent = None
+acceptor = None
 instance_id = str(uuid.uuid4())[:6]
 start_time = time.time()
 request_count = 0
+
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         "status": "healthy",
-        "agent_type": agent_type,
         "instance_id": instance_id,
+        "node_id": acceptor.id if acceptor else "unknown",
+        "agent_name": agent.name if agent else "unknown",
+        "agent_role": agent.role if agent else "unknown",
+        "agent_available": bool(agent.api_key) if agent else False,
         "uptime_seconds": round(time.time() - start_time, 2),
         "request_count": request_count
     })
+
 
 @app.route('/classify', methods=['POST'])
 def classify():
     global request_count
     request_count += 1
-    
+
     data = request.get_json()
     if not data or not data.get('content'):
-        return jsonify({"error": "邮件内容不能为空"}), 400
-    
+        return jsonify({"success": False, "error": "邮件内容不能为空"}), 400
+
     sender = data.get('sender', '')
     subject = data.get('subject', '')
     content = data.get('content', '')
-    
+
     try:
-        result = agent_instance.classify(sender, subject, content)
+        result = agent.classify(sender, subject, content)
         return jsonify({
             "success": True,
-            "agent_name": agent_instance.name,
-            "agent_method": agent_instance.method,
+            "agent_name": agent.name,
+            "agent_role": agent.role,
+            "method": agent.method,
+            "node_id": acceptor.id,
             "instance_id": instance_id,
             "result": result
         })
     except Exception as e:
         return jsonify({
             "success": False,
-            "agent_name": agent_instance.name,
+            "agent_name": agent.name,
             "error": str(e)
         }), 500
 
+
+@app.route('/paxos/prepare', methods=['POST'])
+def paxos_prepare():
+    data = request.get_json()
+    proposal_id = data.get('proposal_id', 0)
+    sender = data.get('sender', 'unknown')
+
+    msg = Message.create_prepare(proposal_id, sender=sender)
+    response = acceptor.handle_prepare(msg)
+
+    return jsonify(response.to_dict())
+
+
+@app.route('/paxos/accept', methods=['POST'])
+def paxos_accept():
+    data = request.get_json()
+    proposal_id = data.get('proposal_id', 0)
+    value = data.get('value', '')
+    sender = data.get('sender', 'unknown')
+
+    msg = Message.create_accept(proposal_id, value, sender=sender)
+    response = acceptor.handle_accept(msg)
+
+    return jsonify(response.to_dict())
+
+
 @app.route('/stats', methods=['GET'])
 def stats():
+    agent_stats = agent.get_stats() if agent else {}
     return jsonify({
-        "agent": agent_instance.get_stats(),
+        "agent": agent_stats,
+        "acceptor_id": acceptor.id if acceptor else "unknown",
+        "acceptor_log": acceptor.log[-5:] if acceptor else [],
         "instance_id": instance_id,
         "uptime_seconds": round(time.time() - start_time, 2),
         "request_count": request_count
     })
 
+
+@app.route('/config', methods=['POST'])
+def set_config():
+    data = request.get_json()
+    api_key = data.get('api_key', '')
+    if api_key:
+        import os
+        os.environ['DEEPSEEK_API_KEY'] = api_key
+        agent.api_key = api_key
+        return jsonify({"success": True, "message": f"API Key 已更新，节点 {acceptor.id} 已就绪"})
+    return jsonify({"success": False, "error": "API Key 不能为空"}), 400
+
+
+@app.route('/paxos/state', methods=['GET'])
+def paxos_state():
+    """查看 Acceptor 当前状态（用于演示 Paxos 两阶段协议）"""
+    return jsonify({
+        "acceptor_id": acceptor.id,
+        "promised_id": acceptor.promised_id,
+        "accepted_id": acceptor.accepted_id,
+        "accepted_value": acceptor.accepted_value,
+        "log": acceptor.log[-10:]
+    })
+
+
+@app.route('/paxos/reset', methods=['POST'])
+def paxos_reset():
+    """重置 Acceptor 状态（用于重新演示）"""
+    acceptor.reset()
+    return jsonify({"success": True, "message": f"{acceptor.id} 状态已重置"})
+
+
+@app.route('/paxos/log', methods=['GET'])
+def paxos_log():
+    return jsonify({
+        "acceptor_id": acceptor.id,
+        "log": acceptor.log[-20:]
+    })
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='独立Agent分类服务')
-    parser.add_argument('--type', type=str, default='rule', choices=['rule', 'bayes', 'lr'], help='Agent类型')
-    parser.add_argument('--port', type=int, default=5001, help='服务端口')
+    parser = argparse.ArgumentParser(description='Acceptor 节点服务 (Agent + Paxos Acceptor)')
+    parser.add_argument('--role', type=str, default='general',
+                        choices=['security', 'business', 'general'],
+                        help='Agent 角色: security/business/general')
+    parser.add_argument('--port', type=int, default=8503, help='服务端口')
+    parser.add_argument('--id', type=str, default='acceptor-1', help='Acceptor ID')
     parser.add_argument('--host', type=str, default='0.0.0.0', help='监听地址')
     args = parser.parse_args()
-    
-    agent_type = args.type
-    agent_instance = AGENT_MAP[agent_type]()
-    
-    print(f"启动Agent服务: {agent_instance.name} ({agent_instance.method})")
-    print(f"实例ID: {instance_id}")
-    print(f"监听地址: {args.host}:{args.port}")
-    
+
+    agent = LLMAgent(role=args.role)
+    acceptor = Acceptor(args.id)
+
+    print(f"========================================")
+    print(f"  Acceptor 节点已启动")
+    print(f"  ID:     {args.id}")
+    print(f"  Agent:  {agent.name} ({agent.role_description})")
+    print(f"  方法:   {agent.method}")
+    print(f"  API:    {args.host}:{args.port}")
+    print(f"  实例:   {instance_id}")
+    print(f"  LLM:    {'已配置' if agent.api_key else '降级模式(关键词)'}")
+    print(f"========================================")
+
     app.run(debug=False, host=args.host, port=args.port)

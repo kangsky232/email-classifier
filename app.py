@@ -7,6 +7,7 @@ from agents.classifier import classifier
 from mq.producer import producer
 from mq.consumer import consumer
 import threading
+import requests
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
@@ -272,61 +273,205 @@ def update_config():
     data = request.get_json()
     for key, value in data.items():
         SystemConfig.set(key, value)
-        if key == 'DASHSCOPE_API_KEY':
+        if key == 'DEEPSEEK_API_KEY':
             import os
-            os.environ['DASHSCOPE_API_KEY'] = value
-            for agent in classifier.local_agents:
-                if hasattr(agent, 'api_key'):
-                    agent.api_key = value
-                    agent.available = bool(value)
+            os.environ['DEEPSEEK_API_KEY'] = value
+            for node in classifier.acceptor_nodes:
+                try:
+                    requests.post(f"{node.url}/health", timeout=2)
+                except Exception:
+                    pass
     return jsonify({"success": True})
 
 @app.route('/api/llm/status', methods=['GET'])
 def get_llm_status():
-    llm_agent = None
-    for agent in classifier.local_agents:
-        if agent.__class__.__name__ == 'LLMAgent':
-            llm_agent = agent
-            break
-    
-    if llm_agent:
-        return jsonify(llm_agent.get_status())
-    
+    node_statuses = []
+    for node in classifier.acceptor_nodes:
+        health = node.check_health()
+        node_statuses.append({
+            "node_id": node.id,
+            "name": node.name,
+            "role": node.role,
+            "url": node.url,
+            "status": node.status,
+            "health": health
+        })
+
+    any_available = any(n["status"] == "online" for n in node_statuses)
     return jsonify({
-        "available": False,
-        "total_providers": 0,
-        "active_providers": 0,
-        "providers": {},
-        "available_list": []
+        "available": any_available,
+        "total_nodes": len(node_statuses),
+        "online_nodes": sum(1 for n in node_statuses if n["status"] == "online"),
+        "nodes": node_statuses
     })
 
 @app.route('/api/llm/config', methods=['POST'])
 def configure_llm():
     data = request.get_json()
     api_key = data.get('api_key', '')
-    provider = data.get('provider', 'qwen')
-    model = data.get('model', '')
+
+    if not api_key:
+        return jsonify({"success": False, "error": "API Key 不能为空"}), 400
 
     import os
-    
-    key_mapping = {
-        'qwen': 'DASHSCOPE_API_KEY',
-        'openai': 'OPENAI_API_KEY',
-        'ernie': 'ERNIE_API_KEY',
-        'spark': 'SPARK_API_KEY',
-        'glm': 'ZHIPU_API_KEY'
-    }
-    
-    env_key = key_mapping.get(provider)
-    if env_key and api_key:
-        os.environ[env_key] = api_key
-    
-    for agent in classifier.local_agents:
-        if agent.__class__.__name__ == 'LLMAgent':
-            agent._init_providers()
-            break
+    os.environ['DEEPSEEK_API_KEY'] = api_key
 
-    return jsonify({"success": True, "message": f"{provider} API Key已更新"})
+    results = []
+    for node in classifier.acceptor_nodes:
+        try:
+            resp = requests.post(
+                f"{node.url}/config",
+                json={"api_key": api_key},
+                timeout=5
+            )
+            results.append({
+                "node": node.name,
+                "success": resp.status_code == 200,
+                "message": resp.json().get("message", "") if resp.status_code == 200 else "失败"
+            })
+        except Exception as e:
+            results.append({"node": node.name, "success": False, "message": str(e)[:80]})
+
+    success_count = sum(1 for r in results if r["success"])
+    if success_count == 0:
+        return jsonify({
+            "success": True,
+            "message": "API Key 已保存（节点未运行，下次启动节点后请重新设置）",
+            "results": results
+        })
+    return jsonify({
+        "success": True,
+        "message": f"已同步到 {success_count}/{len(results)} 个节点",
+        "results": results
+    })
+
+@app.route('/api/paxos/demo-conflict', methods=['POST'])
+def paxos_demo_conflict():
+    """Paxos 冲突演示：展示两阶段协议和 rejection 机制"""
+    import requests as req
+    nodes = [n for n in classifier.acceptor_nodes if n.is_available()]
+
+    if len(nodes) < 3:
+        return jsonify({
+            "success": False,
+            "error": "需要 3 个 Acceptor 节点都在线",
+            "online_nodes": len(nodes)
+        }), 400
+
+    urls = [n.url for n in nodes]
+    log = []
+    rounds = []
+
+    # 重置所有 acceptor
+    for url in urls:
+        try:
+            req.post(f"{url}/paxos/reset", timeout=3)
+        except Exception:
+            pass
+
+    def phase(msg):
+        log.append({"type": "info", "message": msg})
+
+    phase("【初始状态】3 个 Acceptor 的 promised_id = None，accepted_id = None")
+
+    # 第一轮：ID=1
+    phase("【第一轮】Proposer 提案 ID=1，值='会议通知'")
+    r1_promises = 0
+    r1_accepts = 0
+    for url in urls:
+        try:
+            r = req.post(f"{url}/paxos/prepare", json={"proposal_id": 1, "sender": "demo"}, timeout=3)
+            if r.status_code == 200 and r.json().get("type") == "promise":
+                r1_promises += 1
+                phase(f"  ✅ {url.split(':')[-1]} → Promise")
+            else:
+                phase(f"  ❌ {url.split(':')[-1]} → Reject")
+        except Exception:
+            phase(f"  ⚠️ {url.split(':')[-1]} → 无响应")
+
+    if r1_promises >= 2:
+        phase(f"  Prepare 阶段通过 ({r1_promises}/3 ≥ 2)")
+
+        for url in urls:
+            try:
+                r = req.post(f"{url}/paxos/accept", json={"proposal_id": 1, "value": "会议通知", "sender": "demo"}, timeout=3)
+                if r.status_code == 200 and r.json().get("type") == "accepted":
+                    r1_accepts += 1
+                    phase(f"  ✅ {url.split(':')[-1]} → Accepted")
+                else:
+                    phase(f"  ❌ {url.split(':')[-1]} → Reject")
+            except Exception:
+                phase(f"  ⚠️ {url.split(':')[-1]} → 无响应")
+
+        if r1_accepts >= 2:
+            phase(f"  Accept 阶段通过 ({r1_accepts}/3 ≥ 2) → 🎯 共识达成: '会议通知'")
+            rounds.append({"id": 1, "value": "会议通知", "result": "success"})
+        else:
+            rounds.append({"id": 1, "value": "会议通知", "result": "accept_failed"})
+    else:
+        rounds.append({"id": 1, "value": "会议通知", "result": "prepare_failed"})
+
+    # 第二轮：ID=2（更高）
+    phase("【第二轮】Proposer 提案 ID=2，值='可疑邮件' (编号更高)")
+    r2_promises = 0
+    r2_accepts = 0
+    for url in urls:
+        try:
+            r = req.post(f"{url}/paxos/prepare", json={"proposal_id": 2, "sender": "demo"}, timeout=3)
+            if r.status_code == 200 and r.json().get("type") == "promise":
+                r2_promises += 1
+                phase(f"  ✅ {url.split(':')[-1]} → Promise (2 > 1, 接受)")
+            else:
+                phase(f"  ❌ {url.split(':')[-1]} → Reject")
+        except Exception:
+            phase(f"  ⚠️ {url.split(':')[-1]} → 无响应")
+
+    if r2_promises >= 2:
+        phase(f"  Prepare 阶段通过 ({r2_promises}/3 ≥ 2)")
+
+        for url in urls:
+            try:
+                r = req.post(f"{url}/paxos/accept", json={"proposal_id": 2, "value": "可疑邮件", "sender": "demo"}, timeout=3)
+                if r.status_code == 200 and r.json().get("type") == "accepted":
+                    r2_accepts += 1
+                    phase(f"  ✅ {url.split(':')[-1]} → Accepted")
+                else:
+                    phase(f"  ❌ {url.split(':')[-1]} → Reject")
+            except Exception:
+                phase(f"  ⚠️ {url.split(':')[-1]} → 无响应")
+
+        if r2_accepts >= 2:
+            phase(f"  Accept 阶段通过 ({r2_accepts}/3 ≥ 2) → 🎯 共识达成: '可疑邮件'")
+            rounds.append({"id": 2, "value": "可疑邮件", "result": "success"})
+        else:
+            rounds.append({"id": 2, "value": "可疑邮件", "result": "accept_failed"})
+    else:
+        rounds.append({"id": 2, "value": "可疑邮件", "result": "prepare_failed"})
+
+    # 关键：用 ID=1 旧编号重试 → 应被拒绝
+    phase("【⭐ 关键】用旧 ID=1 重新发起 Prepare → 应被拒绝！(已承诺 ID=2)")
+    r3_promises = 0
+    for url in urls:
+        try:
+            r = req.post(f"{url}/paxos/prepare", json={"proposal_id": 1, "sender": "demo"}, timeout=3)
+            if r.status_code == 200 and r.json().get("type") == "promise":
+                r3_promises += 1
+                phase(f"  ✅ {url.split(':')[-1]} → Promise (不应该!)")
+            else:
+                reason = r.json().get("value", "") if r.status_code == 200 else ""
+                phase(f"  ❌ {url.split(':')[-1]} → Reject: {reason}")
+        except Exception:
+            phase(f"  ⚠️ {url.split(':')[-1]} → 无响应")
+
+    if r3_promises < 2:
+        phase(f"  Prepare 阶段失败 ({r3_promises}/3 < 2) → 🔒 已承诺更高 ID=2，旧 ID=1 被拒绝")
+        phase("【结论】Paxos 通过 proposal_id 保证了一致性。一旦承诺更高编号，旧编号提案被永久拒绝。")
+        rounds.append({"id": 1, "value": "会议通知", "result": "rejected"})
+    else:
+        rounds.append({"id": 1, "value": "会议通知", "result": "unexpected"})
+
+    return jsonify({"success": True, "log": log, "rounds": rounds})
+
 
 @app.route('/api/queue/status', methods=['GET'])
 def get_queue_status():

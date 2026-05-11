@@ -26,70 +26,28 @@ async function fetchSettings() {
     `).join('');
     
     const llmStatus = llmData || {};
-    const providers = llmStatus.providers || {};
-    const availableList = llmStatus.available_list || [];
-    
-    const providerNames = {
-        'qwen': '通义千问',
-        'openai': 'ChatGPT',
-        'ernie': '文心一言',
-        'spark': '讯飞星火',
-        'glm': 'ChatGLM'
-    };
-    const providerLinks = {
-        'qwen': 'https://dashscope.console.aliyun.com/apiKey',
-        'openai': 'https://platform.openai.com/api-keys',
-        'ernie': 'https://console.bce.baidu.com/iam/#/iam/accesslist',
-        'spark': 'https://console.xfyun.cn/services/bm4',
-        'glm': 'https://open.bigmodel.cn/usercenter/apikeys'
-    };
-    const providerModels = {
-        'qwen': ['qwen-turbo', 'qwen-plus', 'qwen-max'],
-        'openai': ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo'],
-        'ernie': ['ernie-bot', 'ernie-bot-turbo'],
-        'spark': ['spark-lite', 'spark-pro'],
-        'glm': ['glm-4-flash', 'glm-4']
-    };
-    
-    let providerCards = Object.entries(providerNames).map(([key, name]) => {
-        const p = providers[key] || {};
-        const isActive = p.active || false;
-        const statusBadge = isActive 
-            ? '<span class="badge badge-success">已配置</span>' 
-            : '<span class="badge badge-secondary">未配置</span>';
-        const models = providerModels[key] || [];
-        const modelOptions = models.map(m => `<option value="${m}">${m}</option>`).join('');
-        
-        return `
-            <div class="card" style="margin-bottom:12px;border-left:3px solid ${isActive ? '#52c41a' : '#d9d9d9'}">
-                <div style="display:flex;justify-content:space-between;align-items:center">
-                    <strong>${name} ${statusBadge}</strong>
-                    <a href="${providerLinks[key]}" target="_blank" style="color:#1890ff;font-size:12px">获取API Key →</a>
-                </div>
-                <div class="form-group" style="margin-top:8px">
-                    <input type="password" id="llm-key-${key}" class="form-control" 
-                           placeholder="${p.key_preview || '输入 API Key...'}" value="">
-                </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <button class="btn btn-sm btn-primary" onclick="saveProviderKey('${key}')">保存</button>
-                    <button class="btn btn-sm" onclick="testProviderKey('${key}')">测试</button>
-                </div>
-            </div>
-        `;
-    }).join('');
+    const onlineNodes = llmStatus.online_nodes || 0;
+    const totalNodes = llmStatus.total_nodes || 3;
 
     document.getElementById('settings-content').innerHTML = `
         <div class="card">
-            <div class="card-title">🤖 多模型大模型配置</div>
+            <div class="card-title">🤖 DeepSeek 大模型配置</div>
             <p style="color:#888;font-size:13px;margin-bottom:12px">
-                已配置 <strong>${availableList.length}</strong> 个模型，共支持 5 种大模型 API。在 <code>.env</code> 文件中配置 API Key。
+                Acceptor 节点状态: <strong>${onlineNodes}/${totalNodes}</strong> 在线
             </p>
-            <div id="llm-providers">${providerCards}</div>
-            <div style="margin-top:12px;padding:12px;background:#f6ffed;border-radius:4px;border:1px solid #b7eb8f">
-                <strong>💡 提示：</strong>在项目根目录的 <code>.env</code> 文件中填写 API Key，重启服务后生效。
-                也可以在上方直接输入并保存（仅当次运行有效）。
+            <div class="form-group">
+                <label>DeepSeek API Key</label>
+                <input type="password" id="llm-key-deepseek" class="form-control"
+                       placeholder="输入 sk- 开头的 API Key..." style="width:100%">
             </div>
-            <button class="btn" onclick="testLLM()" style="margin-top:12px">🎯 测试邮件分类（多模型）</button>
+            <div style="display:flex;gap:8px;margin-top:8px">
+                <button class="btn btn-primary" onclick="saveDeepSeekKey()">保存并同步到节点</button>
+                <button class="btn" onclick="testLLM()">测试分类</button>
+            </div>
+            <div id="llm-save-result" style="margin-top:8px"></div>
+            <div style="margin-top:12px;padding:12px;background:#f6ffed;border-radius:4px;border:1px solid #b7eb8f">
+                <strong>💡 提示：</strong>输入 Key 后点击保存，会自动同步到所有 Acceptor 节点，无需重启。
+            </div>
         </div>
         <div class="card">
             <div class="card-title">分类类别管理</div>
@@ -124,65 +82,44 @@ async function fetchSettings() {
     `;
 }
 
-async function saveProviderKey(provider) {
-    const apiKey = document.getElementById(`llm-key-${provider}`).value.trim();
-    
+async function saveDeepSeekKey() {
+    const apiKey = document.getElementById('llm-key-deepseek').value.trim();
+    const resultDiv = document.getElementById('llm-save-result');
+
     if (!apiKey) {
-        showToast('请输入API Key', 'error');
+        showToast('请输入 API Key', 'error');
         return;
     }
-    
+
+    resultDiv.innerHTML = '<span style="color:#1890ff">正在同步到各节点...</span>';
+
     try {
         const result = await fetch('/api/llm/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider: provider, api_key: apiKey })
+            body: JSON.stringify({ api_key: apiKey })
         }).then(r => r.json());
-        
+
         if (result.success) {
-            showToast(`${provider} API Key保存成功`);
-            fetchSettings();
+            let html = '<div style="color:#52c41a"><strong>Key 已同步：</strong></div><ul>';
+            result.results.forEach(r => {
+                html += `<li>${r.node}: ${r.success ? '✅ ' + r.message : '❌ ' + r.message}</li>`;
+            });
+            html += '</ul>';
+            resultDiv.innerHTML = html;
+            showToast('API Key 已同步到 ' + (result.results || []).filter(r => r.success).length + ' 个节点');
+        } else {
+            resultDiv.innerHTML = '<span style="color:#ff4d4f">保存失败</span>';
+            showToast('保存失败', 'error');
         }
     } catch (e) {
+        resultDiv.innerHTML = '<span style="color:#ff4d4f">请求失败: ' + e.message + '</span>';
         showToast('保存失败: ' + e.message, 'error');
     }
 }
 
-async function testProviderKey(provider) {
-    showToast(`正在测试 ${provider} 模型...`);
-    try {
-        const result = await fetch('/api/classify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                sender: 'boss@company.com',
-                subject: '明天下午3点开会',
-                content: '请各位同事明天下午3点准时到会议室参加项目进度汇报会'
-            })
-        }).then(r => r.json());
-        
-        if (result.success) {
-            const llmAgent = result.agents.find(a => a.method === 'llm');
-            if (llmAgent) {
-                const source = llmAgent.details?.source || 'unknown';
-                if (source !== 'fallback') {
-                    showToast(`✅ 分类成功: ${llmAgent.category} (${(llmAgent.confidence*100).toFixed(1)}%) - 模型: ${source}`);
-                } else {
-                    showToast(`⚠️ 模型未连接，使用降级方案: ${llmAgent.category}`, 'warning');
-                }
-            }
-        }
-    } catch (e) {
-        showToast('测试失败: ' + e.message, 'error');
-    }
-}
-
-async function saveLLMConfig() {
-    showToast('请直接在上方保存各模型的API Key');
-}
-
 async function testLLM() {
-    showToast('正在测试多模型分类...');
+    showToast('正在测试分类...');
     try {
         const result = await fetch('/api/classify', {
             method: 'POST',
@@ -193,19 +130,14 @@ async function testLLM() {
                 content: '请各位同事明天下午3点准时到会议室参加项目进度汇报会'
             })
         }).then(r => r.json());
-        
+
         if (result.success) {
             const agentResults = result.agents || [];
-            const llmAgents = agentResults.filter(a => a.method === 'llm');
-            if (llmAgents.length > 0) {
-                const source = llmAgents[0].details?.source || 'unknown';
-                if (source !== 'fallback') {
-                    showToast(`✅ 分类成功: ${llmAgents[0].category} (${(llmAgents[0].confidence*100).toFixed(1)}%) - 来源: ${source}`);
-                } else {
-                    showToast(`⚠️ 所有大模型未配置，使用降级方案: ${llmAgents[0].category}`, 'warning');
-                }
+            const apiAgents = agentResults.filter(a => a.details?.source === 'deepseek_api');
+            if (apiAgents.length > 0) {
+                showToast(`✅ DeepSeek 分类成功: ${apiAgents[0].category} (${(apiAgents[0].confidence*100).toFixed(1)}%)`);
             } else {
-                showToast(`分类完成: ${result.final_category}`);
+                showToast(`⚠️ 使用降级模式: ${result.final_category}`, 'warning');
             }
         }
     } catch (e) {

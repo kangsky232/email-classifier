@@ -113,11 +113,14 @@ function displayClassifyResult(result) {
                 <div class="agent-votes-grid">
                     ${result.agents.map(a => {
                         const color = categoryColors[a.category] || '#8c8c8c';
-                        const isRemote = a.is_remote ? ' <span class="badge badge-info">远程</span>' : '';
+                        let badge = '';
+                        if (a.is_remote) badge = ' <span class="badge badge-info">远程</span>';
+                        if (a.is_acceptor_node) badge = ` <span class="badge badge-success">${a.role || '节点'}</span>`;
+                        const reason = a.details?.reason || a.details?.source || '';
                         return `
                             <div class="agent-vote-card" style="border-left: 4px solid ${color};">
                                 <div class="vote-header">
-                                    <span class="agent-name">${a.agent_name}${isRemote}</span>
+                                    <span class="agent-name">${a.agent_name}${badge}</span>
                                     <span class="vote-method">${a.method}</span>
                                 </div>
                                 <div class="vote-result" style="background: ${color}15;">
@@ -128,6 +131,7 @@ function displayClassifyResult(result) {
                                         </div>
                                         <span>${(a.confidence * 100).toFixed(1)}%</span>
                                     </div>
+                                    ${reason ? `<div class="vote-reason" style="font-size:12px;color:#666;margin-top:4px;">${reason}</div>` : ''}
                                 </div>
                             </div>
                         `;

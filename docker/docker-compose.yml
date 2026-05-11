@@ -48,31 +48,53 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       FLASK_ENV: development
+      ACCEPTOR_1_URL: http://acceptor-1:8503
+      ACCEPTOR_2_URL: http://acceptor-2:8504
+      ACCEPTOR_3_URL: http://acceptor-3:8505
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     ports:
       - "5000:5000"
     networks:
       - mail-network
 
-  agent:
+  acceptor-1:
     build:
       context: ..
       dockerfile: docker/Dockerfile.agent
-    container_name: mail-agent
-    depends_on:
-      mysql:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_started
+    container_name: mail-acceptor-1
     environment:
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
-      DB_PASSWORD: password
-      DB_NAME: mail_system
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_PORT: 5672
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    ports:
+      - "8503:8503"
     networks:
       - mail-network
+    command: ["python", "agent_service.py", "--role", "security", "--port", "8503", "--id", "acceptor-1"]
+
+  acceptor-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-acceptor-2
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    ports:
+      - "8504:8504"
+    networks:
+      - mail-network
+    command: ["python", "agent_service.py", "--role", "business", "--port", "8504", "--id", "acceptor-2"]
+
+  acceptor-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-acceptor-3
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    ports:
+      - "8505:8505"
+    networks:
+      - mail-network
+    command: ["python", "agent_service.py", "--role", "general", "--port", "8505", "--id", "acceptor-3"]
 
 volumes:
   mysql-data:

@@ -127,7 +127,6 @@ function loadPage(page) {
         case 'email': loadEmailPage(); break;
         case 'classify': loadClassifyPage(); break;
         case 'monitor': loadMonitorPage(); break;
-        case 'remote': RemotePage.render(); break;
         case 'compare': ComparePage.render(); break;
         case 'paxos': loadPaxosPage(); break;
         case 'stats': loadStatsPage(); break;

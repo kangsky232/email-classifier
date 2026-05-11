@@ -18,6 +18,8 @@ async function fetchAgentStatus() {
     
     data.agents.forEach(agent => {
         const statusClass = agent.status === 'online' ? 'online' : 'offline';
+        const role = agent.role ? `<div class="detail">角色: ${agent.role}</div>` : '';
+        const url = agent.url ? `<div class="detail">地址: ${agent.url}</div>` : '';
         html += `
         <div class="card agent-card">
             <div class="header">
@@ -25,8 +27,10 @@ async function fetchAgentStatus() {
                 <span class="status ${statusClass}"></span>
             </div>
             <div class="detail">算法: ${agent.method}</div>
+            ${role}
             <div class="detail">已处理: ${agent.processed_count}</div>
             <div class="detail">平均耗时: ${agent.avg_time_ms}ms</div>
+            ${url}
         </div>`;
     });
     

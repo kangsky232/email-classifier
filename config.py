@@ -25,7 +25,16 @@ class Config:
     AGENT_MIN_COUNT = 2
     
     REMOTE_AGENTS = []
-    
+
+    ACCEPTOR_NODES = [
+        {"id": "acceptor-1", "name": "安全专家", "role": "security",
+         "url": os.getenv("ACCEPTOR_1_URL", "http://127.0.0.1:8503"), "port": 8503},
+        {"id": "acceptor-2", "name": "商务助理", "role": "business",
+         "url": os.getenv("ACCEPTOR_2_URL", "http://127.0.0.1:8504"), "port": 8504},
+        {"id": "acceptor-3", "name": "通用分类", "role": "general",
+         "url": os.getenv("ACCEPTOR_3_URL", "http://127.0.0.1:8505"), "port": 8505},
+    ]
+
     @staticmethod
     def get_db_url():
         return f"mysql+pymysql://{Config.DB_USER}:{Config.DB_PASSWORD}@{Config.DB_HOST}:{Config.DB_PORT}/{Config.DB_NAME}"

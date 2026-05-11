@@ -7,7 +7,11 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 
 COPY config.py .
 COPY agents/ /app/agents/
-COPY database/ /app/database/
 COPY paxos/ /app/paxos/
+COPY agent_service.py .
 
-CMD ["python", "-c", "from agents.classifier import classifier; print('Agent service started')"]
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8503 8504 8505
+
+CMD ["python", "agent_service.py", "--role", "general", "--port", "8503", "--id", "acceptor-1"]

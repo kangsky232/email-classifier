@@ -7,7 +7,7 @@ class Acceptor:
         self.accepted_id = None
         self.accepted_value = None
         self.log = []
-    
+
     def handle_prepare(self, message):
         proposal_id = message.proposal_id
         self.log.append({
@@ -15,7 +15,7 @@ class Acceptor:
             "proposal_id": proposal_id,
             "promised_id": self.promised_id
         })
-        
+
         if self.promised_id is None or proposal_id > self.promised_id:
             self.promised_id = proposal_id
             response = Message.create_promise(
@@ -39,18 +39,18 @@ class Acceptor:
                 "reason": f"已承诺更高编号 {self.promised_id}"
             })
             return response
-    
+
     def handle_accept(self, message):
         proposal_id = message.proposal_id
         value = message.value
-        
+
         self.log.append({
             "action": "receive_accept",
             "proposal_id": proposal_id,
             "value": value,
             "promised_id": self.promised_id
         })
-        
+
         if self.promised_id is None or proposal_id >= self.promised_id:
             self.promised_id = proposal_id
             self.accepted_id = proposal_id
@@ -70,7 +70,7 @@ class Acceptor:
                 "reason": f"已承诺更高编号 {self.promised_id}"
             })
             return response
-    
+
     def reset(self):
         self.promised_id = None
         self.accepted_id = None
