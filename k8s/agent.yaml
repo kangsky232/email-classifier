@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mail-agent
+  namespace: mail-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mail-agent
+  template:
+    metadata:
+      labels:
+        app: mail-agent
+    spec:
+      containers:
+      - name: agent
+        image: mail-agent:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DB_HOST
+          value: mysql
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_USER
+          value: root
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: DB_NAME
+          value: mail_system
+        - name: RABBITMQ_HOST
+          value: rabbitmq
+        - name: RABBITMQ_PORT
+          value: "5672"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

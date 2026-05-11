@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分布式邮件分类系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar">
+            <div class="logo">
+                <h2>邮件分类系统</h2>
+                <p>基于多Agent共识</p>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-page="email"><span class="icon">📧</span>邮件管理</li>
+                <li class="nav-item" data-page="classify"><span class="icon">🤖</span>分类中心</li>
+                <li class="nav-item" data-page="monitor"><span class="icon">📊</span>Agent监控</li>
+                <li class="nav-item" data-page="remote"><span class="icon">🌐</span>远程Agent</li>
+                <li class="nav-item" data-page="compare"><span class="icon">🔍</span>分类对比</li>
+                <li class="nav-item" data-page="paxos"><span class="icon">📜</span>Paxos日志</li>
+                <li class="nav-item" data-page="stats"><span class="icon">📈</span>数据统计</li>
+                <li class="nav-item" data-page="settings"><span class="icon">⚙️</span>系统设置</li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="connection-status" id="ws-status">
+                    <span class="status-dot offline"></span>
+                    <span>未连接</span>
+                </div>
+            </div>
+        </nav>
+        <main class="main-content">
+            <div id="page-email" class="page active"></div>
+            <div id="page-classify" class="page"></div>
+            <div id="page-monitor" class="page"></div>
+            <div id="page-remote" class="page"></div>
+            <div id="page-compare" class="page"></div>
+            <div id="page-paxos" class="page"></div>
+            <div id="page-stats" class="page"></div>
+            <div id="page-settings" class="page"></div>
+        </main>
+    </div>
+    <div id="modal-overlay" class="modal-overlay hidden">
+        <div id="modal-content" class="modal-content"></div>
+    </div>
+    <div id="toast-container"></div>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/email.js"></script>
+    <script src="/static/js/classify.js"></script>
+    <script src="/static/js/monitor.js"></script>
+    <script src="/static/js/remote.js"></script>
+    <script src="/static/js/compare.js"></script>
+    <script src="/static/js/paxos.js"></script>
+    <script src="/static/js/stats.js"></script>
+    <script src="/static/js/settings.js"></script>
+</body>
+</html>

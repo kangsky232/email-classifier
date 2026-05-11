@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: mail-system
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: MYSQL_DATABASE
+          value: mail_system
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        - name: init-sql
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command: ["mysqladmin", "ping", "-h", "localhost"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command: ["mysql", "-u", "root", "-p$(MYSQL_ROOT_PASSWORD)", "-e", "SELECT 1"]
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      volumes:
+      - name: init-sql
+        configMap:
+          name: mysql-init-sql
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: mail-system
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+    targetPort: 3306
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: mail-system
+type: Opaque
+data:
+  password: cGFzc3dvcmQ=
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-init-sql
+  namespace: mail-system
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS mail_system DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    USE mail_system;
+    CREATE TABLE IF NOT EXISTS emails (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        sender VARCHAR(255) NOT NULL,
+        subject VARCHAR(500),
+        content TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS classifications (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        email_id INT NOT NULL,
+        agent_name VARCHAR(50),
+        method VARCHAR(50),
+        category VARCHAR(50),
+        confidence FLOAT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS paxos_logs (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        email_id INT NOT NULL,
+        proposal_id INT,
+        phase VARCHAR(20),
+        proposer VARCHAR(50),
+        value VARCHAR(100),
+        result VARCHAR(20),
+        acceptor_votes JSON,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS final_results (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        email_id INT NOT NULL UNIQUE,
+        category VARCHAR(50),
+        method VARCHAR(50),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS system_config (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        config_key VARCHAR(100) UNIQUE,
+        config_value TEXT,
+        updated DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );

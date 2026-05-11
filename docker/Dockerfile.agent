@@ -1,0 +1,13 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+COPY config.py .
+COPY agents/ /app/agents/
+COPY database/ /app/database/
+COPY paxos/ /app/paxos/
+
+CMD ["python", "-c", "from agents.classifier import classifier; print('Agent service started')"]

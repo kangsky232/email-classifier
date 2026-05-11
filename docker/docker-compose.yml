@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mail-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: mail_system
+    volumes:
+      - ../init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - mail-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: mail-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - mail-network
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.app
+    container_name: mail-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_NAME: mail_system
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      FLASK_ENV: development
+    ports:
+      - "5000:5000"
+    networks:
+      - mail-network
+
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-agent
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_NAME: mail_system
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+    networks:
+      - mail-network
+
+volumes:
+  mysql-data:
+
+networks:
+  mail-network:
+    driver: bridge
