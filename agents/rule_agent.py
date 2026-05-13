@@ -33,11 +33,14 @@ class RuleAgent(BaseAgent):
             scores[category] = {"score": score, "matched": matched}
         
         if not any(scores[c]["score"] > 0 for c in scores):
-            return {
-                "category": "未分类",
-                "confidence": 0.5,
-                "details": scores
-            }
+            text = f"{sender} {subject} {content}".lower()
+            has_urgency = any(w in text for w in ["赶紧", "立即", "马上", "尽快", "紧急", "务必", "点击", "链接"])
+            has_url = any(p in text for p in ["http", "www.", ".com", ".cn"])
+            if has_url or has_urgency:
+                return {"category": "可疑邮件", "confidence": 0.41, "details": scores}
+            if any(w in text for w in ["你好", "您好", "请", "谢谢"]):
+                return {"category": "工作汇报", "confidence": 0.38, "details": scores}
+            return {"category": "会议通知", "confidence": 0.35, "details": scores}
         
         best_category = max(scores, key=lambda c: scores[c]["score"])
         max_score = scores[best_category]["score"]

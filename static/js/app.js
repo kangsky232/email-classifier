@@ -1,158 +1,153 @@
-const API_BASE = '';
-let currentPage = 'email';
-let socket = null;
-
 const API = {
-    async get(url) {
-        const resp = await fetch(API_BASE + url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return resp.json();
+    async request(url, options = {}) {
+        const config = {
+            method: options.method || "GET",
+            headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+        };
+        if (options.body !== undefined) {
+            config.body = JSON.stringify(options.body);
+        }
+        const response = await fetch(url, config);
+        let data = {};
+        try {
+            data = await response.json();
+        } catch (error) {
+            data = {};
+        }
+        if (!response.ok) {
+            throw new Error(data.error || data.message || `HTTP ${response.status}`);
+        }
+        return data;
     },
-    async post(url, data) {
-        const resp = await fetch(API_BASE + url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return resp.json();
-    },
-    async put(url, data) {
-        const resp = await fetch(API_BASE + url, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return resp.json();
-    },
-    async delete(url, data) {
-        const resp = await fetch(API_BASE + url, {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return resp.json();
-    }
+    get(url) { return this.request(url); },
+    post(url, body) { return this.request(url, { method: "POST", body }); },
+    put(url, body) { return this.request(url, { method: "PUT", body }); },
+    delete(url, body) { return this.request(url, { method: "DELETE", body }); }
 };
 
 const App = {
+    currentPage: "email",
+    pages: {
+        email: () => EmailPage.load(),
+        classify: () => ClassifyPage.load(),
+        monitor: () => MonitorPage.load(),
+        paxos: () => PaxosPage.load(),
+        stats: () => StatsPage.load(),
+        settings: () => SettingsPage.load()
+    },
+
     init() {
-        this.initSocket();
-        this.initNav();
-        this.initModal();
-        loadPage('email');
-    },
-
-    initSocket() {
-        socket = io();
-        
-        socket.on('connect', () => {
-            const statusEl = document.getElementById('ws-status');
-            statusEl.innerHTML = '<span class="status-dot online"></span><span>已连接</span>';
-            console.log('WebSocket已连接');
+        document.querySelectorAll(".nav-item").forEach((item) => {
+            item.addEventListener("click", () => this.switchPage(item.dataset.page));
         });
-
-        socket.on('disconnect', () => {
-            const statusEl = document.getElementById('ws-status');
-            statusEl.innerHTML = '<span class="status-dot offline"></span><span>已断开</span>';
-            console.log('WebSocket已断开');
+        const modal = document.getElementById("modal-overlay");
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal) this.closeModal();
         });
-
-        socket.on('classify_progress', (data) => {
-            if (currentPage === 'classify') {
-                ClassifyPage.handleProgress(data);
-            }
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") this.closeModal();
         });
-    },
-
-    initNav() {
-        document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const page = item.dataset.page;
-                this.switchPage(page);
-            });
-        });
-    },
-
-    initModal() {
-        document.getElementById('modal-overlay').addEventListener('click', e => {
-            if (e.target === e.currentTarget) this.closeModal();
-        });
+        this.loadPage(this.currentPage);
     },
 
     switchPage(page) {
-        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-        document.querySelector(`[data-page="${page}"]`).classList.add('active');
-        document.getElementById(`page-${page}`).classList.add('active');
-        currentPage = page;
-        loadPage(page);
+        if (!this.pages[page]) return;
+        this.currentPage = page;
+        document.querySelectorAll(".nav-item").forEach((item) => {
+            item.classList.toggle("active", item.dataset.page === page);
+        });
+        document.querySelectorAll(".page").forEach((item) => item.classList.remove("active"));
+        document.getElementById(`page-${page}`).classList.add("active");
+        this.loadPage(page);
     },
 
-    showToast(msg, type = 'success') {
-        const toast = document.createElement('div');
+    loadPage(page) {
+        this.pages[page]();
+    },
+
+    setLoading(container, text = "Loading...") {
+        container.innerHTML = `<div class="loading"><div class="spinner"></div>${this.escape(text)}</div>`;
+    },
+
+    setError(container, error, retryHandler) {
+        const message = error instanceof Error ? error.message : String(error || "Request failed");
+        container.innerHTML = `
+            <div class="error-state">
+                <p>${this.escape(message)}</p>
+                ${retryHandler ? '<button class="btn btn-primary" data-retry="1" type="button">Retry</button>' : ""}
+            </div>
+        `;
+        if (retryHandler) {
+            container.querySelector("[data-retry]").addEventListener("click", retryHandler);
+        }
+    },
+
+    empty(text = "No data") {
+        return `<div class="empty-state">${this.escape(text)}</div>`;
+    },
+
+    showToast(message, type = "success") {
+        const container = document.getElementById("toast-container");
+        const toast = document.createElement("div");
         toast.className = `toast ${type}`;
-        toast.textContent = msg;
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 4000);
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 3500);
     },
 
     showModal(html) {
-        document.getElementById('modal-content').innerHTML = html;
-        document.getElementById('modal-overlay').classList.remove('hidden');
+        document.getElementById("modal-content").innerHTML = html;
+        document.getElementById("modal-overlay").classList.remove("hidden");
     },
 
     closeModal() {
-        document.getElementById('modal-overlay').classList.add('hidden');
+        document.getElementById("modal-overlay").classList.add("hidden");
+        document.getElementById("modal-content").innerHTML = "";
     },
 
-    renderPagination(total, page, limit, onPageChange) {
-        const totalPages = Math.ceil(total / limit);
-        if (totalPages <= 1) return '';
-        let html = '<div class="pagination">';
-        html += `<button ${page <= 1 ? 'disabled' : ''} onclick="${onPageChange}(${page-1})">上一页</button>`;
-        for (let i = 1; i <= totalPages && i <= 7; i++) {
-            html += `<button class="${i === page ? 'active' : ''}" onclick="${onPageChange}(${i})">${i}</button>`;
+    renderPagination(total, page, limit, onPageChangeName) {
+        const totalPages = Math.max(Math.ceil((Number(total) || 0) / limit), 1);
+        if (totalPages <= 1) return "";
+        const start = Math.max(1, page - 2);
+        const end = Math.min(totalPages, start + 4);
+        const buttons = [`<button type="button" ${page <= 1 ? "disabled" : ""} onclick="${onPageChangeName}(${page - 1})">Prev</button>`];
+        for (let i = start; i <= end; i += 1) {
+            buttons.push(`<button type="button" class="${i === page ? "active" : ""}" onclick="${onPageChangeName}(${i})">${i}</button>`);
         }
-        html += `<button ${page >= totalPages ? 'disabled' : ''} onclick="${onPageChange}(${page+1})">下一页</button>`;
-        html += '</div>';
-        return html;
+        buttons.push(`<button type="button" ${page >= totalPages ? "disabled" : ""} onclick="${onPageChangeName}(${page + 1})">Next</button>`);
+        return `<div class="pagination">${buttons.join("")}</div>`;
+    },
+
+    formatDate(value) {
+        if (!value) return "-";
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    },
+
+    percent(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : "-";
+    },
+
+    badge(category) {
+        if (!category) return '<span class="badge badge-muted">Unclassified</span>';
+        const text = this.escape(category);
+        if (category.includes("spam") || category.includes("junk") || category.includes("suspicious") || category.includes("垃圾") || category.includes("可疑")) {
+            return `<span class="badge badge-danger">${text}</span>`;
+        }
+        if (category.includes("work") || category.includes("工作")) return `<span class="badge badge-success">${text}</span>`;
+        if (category.includes("meeting") || category.includes("会议")) return `<span class="badge badge-info">${text}</span>`;
+        return `<span class="badge">${text}</span>`;
+    },
+
+    escape(value) {
+        return String(value ?? "")
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
     }
 };
 
-function loadPage(page) {
-    switch(page) {
-        case 'email': loadEmailPage(); break;
-        case 'classify': loadClassifyPage(); break;
-        case 'monitor': loadMonitorPage(); break;
-        case 'remote': RemotePage.render(); break;
-        case 'compare': ComparePage.render(); break;
-        case 'paxos': loadPaxosPage(); break;
-        case 'stats': loadStatsPage(); break;
-        case 'settings': loadSettingsPage(); break;
-    }
-}
-
-function api(url, options = {}) {
-    return API.get(url).catch(e => {
-        console.error('API Error:', e);
-        App.showToast('请求失败', 'error');
-        return null;
-    });
-}
-
-function showToast(msg, type = 'success') {
-    App.showToast(msg, type);
-}
-
-function showModal(html) {
-    App.showModal(html);
-}
-
-function hideModal() {
-    App.closeModal();
-}
-
-document.addEventListener('DOMContentLoaded', () => App.init());
+window.addEventListener("DOMContentLoaded", () => App.init());

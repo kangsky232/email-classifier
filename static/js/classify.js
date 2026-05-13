@@ -1,185 +1,149 @@
-async function loadClassifyPage() {
-    const container = document.getElementById('page-classify');
-    container.innerHTML = `
-        <div class="page-header"><h1>🤖 分类中心</h1></div>
-        <div class="card">
-            <div class="form-group">
-                <label>发件人</label>
-                <input type="text" id="classify-sender" placeholder="example@mail.com" value="boss@company.com">
-            </div>
-            <div class="form-group">
-                <label>主题</label>
-                <input type="text" id="classify-subject" placeholder="邮件主题" value="关于明天下午3点开会的通知">
-            </div>
-            <div class="form-group">
-                <label>内容</label>
-                <textarea id="classify-content" rows="4" placeholder="邮件内容">请各位同事明天下午3点准时到会议室参加项目进度汇报会</textarea>
-            </div>
-            <div class="btn-group">
-                <button class="btn btn-primary" id="classify-btn" onclick="submitClassify()">🚀 提交分类</button>
-                <button class="btn" onclick="clearClassifyForm()">📋 清空</button>
-            </div>
-        </div>
-        <div id="classify-progress" style="display:none;">
-            <div class="card">
-                <div class="card-title">分类进度</div>
-                <div id="progress-content"></div>
-            </div>
-        </div>
-        <div id="classify-result"></div>
-    `;
-}
-
 const ClassifyPage = {
-    handleProgress(data) {
-        const progressDiv = document.getElementById('classify-progress');
-        const progressContent = document.getElementById('progress-content');
-        if (!progressDiv || !progressContent) return;
-        
-        progressDiv.style.display = 'block';
-        
-        if (data.stage === 'started') {
-            progressContent.innerHTML = `
-                <div class="progress-step active">
-                    <span class="progress-icon">⏳</span>
-                    <span>${data.message}</span>
+    load() {
+        const page = document.getElementById("page-classify");
+        page.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h2>Classify Center</h2>
+                    <p class="page-subtitle">Submit email content to the existing /api/classify endpoint.</p>
                 </div>
-            `;
-        } else if (data.stage === 'completed') {
-            progressContent.innerHTML = `
-                <div class="progress-step completed">
-                    <span class="progress-icon">✅</span>
-                    <span>分类完成!</span>
+            </div>
+            <div class="grid two">
+                <div class="card">
+                    <h3 class="card-title">Input</h3>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Sender</label><input id="classify-sender" value="boss@company.com"></div>
+                        <div class="form-group"><label>Subject</label><input id="classify-subject" value="Project meeting notice"></div>
+                        <div class="form-group"><label>Content</label><textarea id="classify-content">Please attend the project progress meeting tomorrow at 3 PM.</textarea></div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn" type="button" onclick="ClassifyPage.clear()">Clear</button>
+                        <button id="classify-submit" class="btn btn-primary" type="button" onclick="ClassifyPage.submit()">Submit</button>
+                    </div>
                 </div>
-            `;
-            setTimeout(() => {
-                progressDiv.style.display = 'none';
-            }, 2000);
+                <div id="classify-result" class="card">
+                    <h3 class="card-title">Result</h3>
+                    <div class="empty-state">Submit an email to see final category, agent votes, and Paxos logs.</div>
+                </div>
+            </div>
+        `;
+    },
+
+    clear() {
+        document.getElementById("classify-sender").value = "";
+        document.getElementById("classify-subject").value = "";
+        document.getElementById("classify-content").value = "";
+        document.getElementById("classify-result").innerHTML = `
+            <h3 class="card-title">Result</h3>
+            <div class="empty-state">Submit an email to see final category, agent votes, and Paxos logs.</div>
+        `;
+    },
+
+    async submit() {
+        const sender = document.getElementById("classify-sender").value.trim() || "unknown";
+        const subject = document.getElementById("classify-subject").value.trim();
+        const content = document.getElementById("classify-content").value.trim();
+        const button = document.getElementById("classify-submit");
+        const box = document.getElementById("classify-result");
+        if (!content) {
+            App.showToast("Content is required", "warning");
+            return;
         }
+        button.disabled = true;
+        App.setLoading(box, "Classifying...");
+        try {
+            const result = await API.post("/api/classify", { sender, subject, content });
+            this.renderResult(result);
+            App.showToast("Classification complete");
+        } catch (error) {
+            App.setError(box, error, () => this.submit());
+            App.showToast(error.message, "error");
+        } finally {
+            button.disabled = false;
+        }
+    },
+
+    renderResult(result) {
+        const box = document.getElementById("classify-result");
+        if (!result.success) {
+            App.setError(box, result.message || "Classification failed");
+            return;
+        }
+        const agents = result.agents || [];
+        const paxosLog = result.paxos_log || [];
+        box.innerHTML = `
+            <h3 class="card-title">Result</h3>
+            <div class="result-hero">
+                <div class="completion-animation" aria-label="Classification completed">
+                    <div class="completion-ring">
+                        <span class="completion-check">✓</span>
+                    </div>
+                    <div class="completion-pulse"></div>
+                </div>
+                <div>
+                    <div class="stat-label">Final category</div>
+                    <div class="stat-value">${App.escape(result.final_category || "-")}</div>
+                </div>
+                <div class="text-muted">method: ${App.escape(result.method || "-")} ${result.email_id ? `| email id: ${result.email_id}` : ""}</div>
+                ${result.message ? `<p>${App.escape(result.message)}</p>` : ""}
+            </div>
+            <h4>Agent Results</h4>
+            ${this.renderAgents(agents)}
+            <h4>Paxos Process</h4>
+            ${this.renderPaxos(paxosLog)}
+        `;
+    },
+
+    renderAgents(agents) {
+        if (!agents.length) return App.empty("No agent results");
+        return `
+            <div class="agent-result-grid">
+                ${agents.map((agent, index) => {
+                    const confidence = Number(agent.confidence) || 0;
+                    const safeConfidence = Math.max(0, Math.min(confidence, 1));
+                    const category = agent.category || "Unknown";
+                    const color = this.categoryColor(category, index);
+                    return `
+                        <div class="card agent-card agent-result-card" style="box-shadow:none">
+                            <div class="agent-head">
+                                <strong>${App.escape(agent.agent_name || agent.name || "-")}</strong>
+                                ${App.badge(agent.category)}
+                            </div>
+                            <div class="text-muted">${App.escape(agent.method || "-")}</div>
+                            <div class="confidence-panel">
+                                <div class="confidence-meta">
+                                    <span>${App.escape(category)}</span>
+                                    <strong>${(safeConfidence * 100).toFixed(1)}%</strong>
+                                </div>
+                                <div class="confidence-track" title="${App.escape(category)} ${(safeConfidence * 100).toFixed(1)}%">
+                                    <div class="confidence-fill-visual" style="width:${safeConfidence * 100}%; background:${color};"></div>
+                                </div>
+                                <div class="confidence-note">${App.escape(category)} confidence from this agent</div>
+                            </div>
+                            ${agent.error ? `<div class="error-state" style="padding:0;text-align:left">${App.escape(agent.error)}</div>` : ""}
+                        </div>
+                    `;
+                }).join("")}
+            </div>
+        `;
+    },
+
+    renderPaxos(logs) {
+        if (!logs.length) return App.empty("No Paxos logs for this request");
+        return `<div class="timeline">${logs.map((log) => `
+            <div class="timeline-item">
+                <strong>${App.escape(log.phase || log.type || "step")}</strong>
+                <div>${App.escape(log.message || log.value || JSON.stringify(log))}</div>
+            </div>
+        `).join("")}</div>`;
+    },
+
+    categoryColor(category, index) {
+        const colors = ["#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed", "#0891b2"];
+        if (category.includes("垃圾") || category.toLowerCase().includes("spam")) return "#dc2626";
+        if (category.includes("工作") || category.toLowerCase().includes("work")) return "#16a34a";
+        if (category.includes("会议") || category.toLowerCase().includes("meeting")) return "#2563eb";
+        if (category.includes("可疑") || category.toLowerCase().includes("suspicious")) return "#d97706";
+        return colors[index % colors.length];
     }
 };
-
-function clearClassifyForm() {
-    document.getElementById('classify-sender').value = '';
-    document.getElementById('classify-subject').value = '';
-    document.getElementById('classify-content').value = '';
-    document.getElementById('classify-result').innerHTML = '';
-    document.getElementById('classify-progress').style.display = 'none';
-}
-
-async function submitClassify() {
-    const sender = document.getElementById('classify-sender').value;
-    const subject = document.getElementById('classify-subject').value;
-    const content = document.getElementById('classify-content').value;
-    
-    if (!content) { App.showToast('邮件内容不能为空', 'error'); return; }
-    
-    const btn = document.getElementById('classify-btn');
-    btn.disabled = true;
-    btn.textContent = '分类中...';
-    document.getElementById('classify-result').innerHTML = '<div class="loading">正在分类，请稍候...</div>';
-    document.getElementById('classify-progress').style.display = 'block';
-    
-    try {
-        const result = await API.post('/api/classify', { sender, subject, content });
-        
-        btn.disabled = false;
-        btn.textContent = '🚀 提交分类';
-        document.getElementById('classify-progress').style.display = 'none';
-        
-        if (!result) return;
-        displayClassifyResult(result);
-    } catch (e) {
-        btn.disabled = false;
-        btn.textContent = '🚀 提交分类';
-        App.showToast('分类失败: ' + e.message, 'error');
-    }
-}
-
-function displayClassifyResult(result) {
-    const container = document.getElementById('classify-result');
-    
-    const categoryColors = {
-        '工作': '#1890ff', '个人': '#52c41a', '广告': '#faad14',
-        '垃圾': '#ff4d4f', '社交': '#722ed1', '财务': '#13c2c2',
-        '技术支持': '#2f54eb', '其他': '#8c8c8c'
-    };
-    
-    let agentsHtml = '';
-    if (result.agents && result.agents.length > 0) {
-        agentsHtml = `
-            <div class="card">
-                <div class="card-title">Agent投票详情</div>
-                <div class="agent-votes-grid">
-                    ${result.agents.map(a => {
-                        const color = categoryColors[a.category] || '#8c8c8c';
-                        const isRemote = a.is_remote ? ' <span class="badge badge-info">远程</span>' : '';
-                        return `
-                            <div class="agent-vote-card" style="border-left: 4px solid ${color};">
-                                <div class="vote-header">
-                                    <span class="agent-name">${a.agent_name}${isRemote}</span>
-                                    <span class="vote-method">${a.method}</span>
-                                </div>
-                                <div class="vote-result" style="background: ${color}15;">
-                                    <div class="vote-category" style="color: ${color}; font-weight: bold;">${a.category}</div>
-                                    <div class="vote-confidence">
-                                        <div class="confidence-bar">
-                                            <div class="confidence-fill" style="width: ${(a.confidence * 100).toFixed(0)}%; background: ${color};"></div>
-                                        </div>
-                                        <span>${(a.confidence * 100).toFixed(1)}%</span>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        `;
-    }
-    
-    let paxosHtml = '';
-    if (result.paxos_log && result.paxos_log.length > 0) {
-        paxosHtml = `
-            <div class="card">
-                <div class="card-title">Paxos共识过程</div>
-                <div class="paxos-timeline">
-                    ${result.paxos_log.map(log => {
-                        const resultClass = log.type === 'fail' ? 'fail' : log.type === 'learn' ? 'success' : '';
-                        return `<div class="paxos-event ${resultClass}">
-                            <div class="msg">${log.message}</div>
-                        </div>`;
-                    }).join('')}
-                </div>
-            </div>
-        `;
-    }
-    
-    const finalColor = categoryColors[result.final_category] || '#8c8c8c';
-    const methodLabel = {
-        'agent_consensus': 'Agent投票一致',
-        'paxos_consensus': 'Paxos共识决策',
-        'fallback': '降级处理'
-    };
-    
-    container.innerHTML = `
-        <div class="card result-card" style="border-top: 4px solid ${finalColor};">
-            <div class="card-title">最终分类结果</div>
-            <div class="final-result-display">
-                <div class="result-category" style="color: ${finalColor}; font-size: 24px; font-weight: bold;">
-                    ${result.final_category}
-                </div>
-                <div class="result-method">
-                    <span class="badge badge-${result.method === 'paxos_consensus' ? 'warning' : 'success'}">
-                        ${methodLabel[result.method] || result.method}
-                    </span>
-                </div>
-                <div class="result-message">${result.message || ''}</div>
-                ${result.elapsed_ms ? `<div class="result-time">Paxos耗时: ${result.elapsed_ms}ms</div>` : ''}
-            </div>
-        </div>
-        ${agentsHtml}
-        ${paxosHtml}
-    `;
-    
-    App.showToast('分类完成');
-}

@@ -3,55 +3,66 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>分布式邮件分类系统</title>
+    <title>Email Classifier</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
-    <div class="app-container">
-        <nav class="sidebar">
-            <div class="logo">
-                <h2>邮件分类系统</h2>
-                <p>基于多Agent共识</p>
-            </div>
-            <ul class="nav-menu">
-                <li class="nav-item active" data-page="email"><span class="icon">📧</span>邮件管理</li>
-                <li class="nav-item" data-page="classify"><span class="icon">🤖</span>分类中心</li>
-                <li class="nav-item" data-page="monitor"><span class="icon">📊</span>Agent监控</li>
-                <li class="nav-item" data-page="remote"><span class="icon">🌐</span>远程Agent</li>
-                <li class="nav-item" data-page="compare"><span class="icon">🔍</span>分类对比</li>
-                <li class="nav-item" data-page="paxos"><span class="icon">📜</span>Paxos日志</li>
-                <li class="nav-item" data-page="stats"><span class="icon">📈</span>数据统计</li>
-                <li class="nav-item" data-page="settings"><span class="icon">⚙️</span>系统设置</li>
-            </ul>
-            <div class="sidebar-footer">
-                <div class="connection-status" id="ws-status">
-                    <span class="status-dot offline"></span>
-                    <span>未连接</span>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-mark">M</div>
+                <div>
+                    <h1>Email Classifier</h1>
+                    <p>Multi-Agent Consensus</p>
                 </div>
             </div>
-        </nav>
+            <nav class="nav-menu" aria-label="main navigation">
+                <button class="nav-item active" data-page="email" type="button">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg></span>
+                    <span>Emails</span>
+                </button>
+                <button class="nav-item" data-page="classify" type="button">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8h14"/><path d="M7 8l-3 6h6z"/><path d="M17 8l-3 6h6z"/></svg></span>
+                    <span>Classify</span>
+                </button>
+                <button class="nav-item" data-page="monitor" type="button">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15v-4"/><path d="M12 15V8"/><path d="M16 15v-6"/></svg></span>
+                    <span>Agents</span>
+                </button>
+                <button class="nav-item" data-page="paxos" type="button">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M6 7h12"/><path d="M6 12h12"/><path d="M6 17h12"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/></svg></span>
+                    <span>Paxos Logs</span>
+                </button>
+                <button class="nav-item" data-page="stats" type="button">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19h16"/><path d="M7 16V9"/><path d="M12 16V5"/><path d="M17 16v-4"/></svg></span>
+                    <span>Stats</span>
+                </button>
+                <button class="nav-item" data-page="settings" type="button">
+                    <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m5.6 5.6 2.1 2.1"/><path d="m16.3 16.3 2.1 2.1"/><path d="m18.4 5.6-2.1 2.1"/><path d="m7.7 16.3-2.1 2.1"/></svg></span>
+                    <span>Settings</span>
+                </button>
+            </nav>
+        </aside>
+
         <main class="main-content">
-            <div id="page-email" class="page active"></div>
-            <div id="page-classify" class="page"></div>
-            <div id="page-monitor" class="page"></div>
-            <div id="page-remote" class="page"></div>
-            <div id="page-compare" class="page"></div>
-            <div id="page-paxos" class="page"></div>
-            <div id="page-stats" class="page"></div>
-            <div id="page-settings" class="page"></div>
+            <section id="page-email" class="page active"></section>
+            <section id="page-classify" class="page"></section>
+            <section id="page-monitor" class="page"></section>
+            <section id="page-paxos" class="page"></section>
+            <section id="page-stats" class="page"></section>
+            <section id="page-settings" class="page"></section>
         </main>
     </div>
+
     <div id="modal-overlay" class="modal-overlay hidden">
-        <div id="modal-content" class="modal-content"></div>
+        <div id="modal-content" class="modal-content" role="dialog" aria-modal="true"></div>
     </div>
-    <div id="toast-container"></div>
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
     <script src="/static/js/app.js"></script>
     <script src="/static/js/email.js"></script>
     <script src="/static/js/classify.js"></script>
     <script src="/static/js/monitor.js"></script>
-    <script src="/static/js/remote.js"></script>
-    <script src="/static/js/compare.js"></script>
     <script src="/static/js/paxos.js"></script>
     <script src="/static/js/stats.js"></script>
     <script src="/static/js/settings.js"></script>

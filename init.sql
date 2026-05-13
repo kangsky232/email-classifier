@@ -44,12 +44,12 @@ CREATE TABLE IF NOT EXISTS final_results (
 
 CREATE TABLE IF NOT EXISTS system_config (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    config_key VARCHAR(100) UNIQUE,
+    config_key VARCHAR(100) NOT NULL UNIQUE,
     config_value TEXT,
-    updated DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
-INSERT INTO system_config (config_key, config_value) VALUES 
+INSERT INTO system_config (config_key, config_value) VALUES
 ('categories', '["会议通知", "垃圾邮件", "工作汇报", "可疑邮件"]'),
 ('paxos_acceptor_count', '3'),
 ('paxos_timeout_ms', '5000'),

@@ -1,324 +1,334 @@
-let emailPage = 1;
-let emailSearch = '';
-let emailCategory = '';
-let selectedEmails = new Set();
+const EmailPage = {
+    page: 1,
+    limit: 10,
+    search: "",
+    category: "",
+    selected: new Set(),
 
-async function loadEmailPage() {
-    const container = document.getElementById('page-email');
-    container.innerHTML = `
-        <div class="page-header">
-            <h1>📧 邮件管理</h1>
-            <div class="header-actions">
-                <button class="btn btn-success" onclick="showCreateEmailModal()">+ 新建邮件</button>
+    load() {
+        const page = document.getElementById("page-email");
+        page.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h2>Email Management</h2>
+                    <p class="page-subtitle">Create, edit, batch classify, delete, and inspect stored emails.</p>
+                </div>
+                <button class="btn btn-primary" type="button" onclick="EmailPage.openCreateModal()">New Email</button>
             </div>
-        </div>
-        <div class="card">
-            <div class="search-bar">
-                <input type="text" id="email-search" placeholder="搜索发件人、主题、内容..." value="${emailSearch}">
-                <select id="email-category-filter">
-                    <option value="">全部分类</option>
-                    <option value="工作">工作</option>
-                    <option value="个人">个人</option>
-                    <option value="广告">广告</option>
-                    <option value="垃圾">垃圾</option>
-                    <option value="社交">社交</option>
-                    <option value="财务">财务</option>
-                    <option value="技术支持">技术支持</option>
-                </select>
-                <button class="btn btn-primary" onclick="searchEmails()">搜索</button>
+            <div class="card">
+                <div class="toolbar">
+                    <input id="email-search" class="form-control" style="max-width:320px" placeholder="Search sender, subject, content" value="${App.escape(this.search)}">
+                    <select id="email-category" class="form-control" style="max-width:180px">
+                        <option value="">All categories</option>
+                        <option value="会议通知">Meeting</option>
+                        <option value="垃圾邮件">Spam</option>
+                        <option value="工作汇报">Work report</option>
+                        <option value="可疑邮件">Suspicious</option>
+                    </select>
+                    <button class="btn" type="button" onclick="EmailPage.applyFilters()">Filter</button>
+                    <button class="btn" type="button" onclick="EmailPage.resetFilters()">Reset</button>
+                </div>
+                <div id="email-batch-bar" class="batch-actions hidden">
+                    <strong><span id="email-selected-count">0</span> selected</strong>
+                    <button class="btn btn-sm btn-primary" type="button" onclick="EmailPage.batchClassify()">Batch classify</button>
+                    <button class="btn btn-sm btn-danger" type="button" onclick="EmailPage.batchDelete()">Batch delete</button>
+                    <button class="btn btn-sm" type="button" onclick="EmailPage.clearSelection()">Clear</button>
+                </div>
+                <div id="email-list"></div>
             </div>
-            <div class="batch-bar" id="batch-bar" style="display:none;">
-                <span id="selected-count">0</span> 封邮件已选
-                <button class="btn btn-sm btn-primary" onclick="batchClassify()">批量分类</button>
-                <button class="btn btn-sm btn-danger" onclick="batchDelete()">批量删除</button>
-                <button class="btn btn-sm" onclick="clearSelection()">取消选择</button>
-            </div>
-            <div id="email-table"><div class="loading">加载中...</div></div>
-        </div>
-    `;
-    document.getElementById('email-category-filter').value = emailCategory;
-    document.getElementById('email-search').addEventListener('keyup', (e) => {
-        if (e.key === 'Enter') searchEmails();
-    });
-    fetchEmails();
-}
-
-async function fetchEmails() {
-    const data = await API.get(`/api/emails?page=${emailPage}&limit=10&search=${emailSearch}&category=${emailCategory}`);
-    if (!data) return;
-    
-    const container = document.getElementById('email-table');
-    if (!data.data || data.data.length === 0) {
-        container.innerHTML = '<div class="empty">暂无邮件数据</div>';
-        return;
-    }
-    
-    let html = `<table>
-        <thead><tr>
-            <th><input type="checkbox" onchange="toggleAllEmails(this)" ${selectedEmails.size > 0 ? 'checked' : ''}></th>
-            <th>ID</th><th>发件人</th><th>主题</th><th>分类</th><th>置信度</th><th>时间</th><th>操作</th>
-        </tr></thead>
-        <tbody>`;
-    
-    data.data.forEach(e => {
-        const category = e.final_category || '未分类';
-        const badgeClass = getBadgeClass(category);
-        const time = new Date(e.created_at).toLocaleString('zh-CN');
-        const confidence = e.confidence ? (e.confidence * 100).toFixed(1) + '%' : '-';
-        const isChecked = selectedEmails.has(e.id) ? 'checked' : '';
-        html += `<tr class="${selectedEmails.has(e.id) ? 'selected' : ''}">
-            <td><input type="checkbox" ${isChecked} onchange="toggleEmailSelect(${e.id}, this)"></td>
-            <td>${e.id}</td>
-            <td>${e.sender}</td>
-            <td>${e.subject || '-'}</td>
-            <td><span class="badge ${badgeClass}">${category}</span></td>
-            <td>${confidence}</td>
-            <td>${time}</td>
-            <td>
-                <button class="btn btn-sm btn-primary" onclick="viewEmailDetail(${e.id})">详情</button>
-                <button class="btn btn-sm btn-warning" onclick="classifySingleEmail(${e.id})">分类</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteEmail(${e.id})">删除</button>
-            </td>
-        </tr>`;
-    });
-    
-    html += '</tbody></table>';
-    html += App.renderPagination(data.total, data.page, data.limit, 'goEmailPage');
-    container.innerHTML = html;
-    updateBatchBar();
-}
-
-function toggleEmailSelect(id, checkbox) {
-    if (checkbox.checked) {
-        selectedEmails.add(id);
-    } else {
-        selectedEmails.delete(id);
-    }
-    updateBatchBar();
-}
-
-function toggleAllEmails(checkbox) {
-    const rows = document.querySelectorAll('#email-table tbody tr');
-    rows.forEach(row => {
-        const cb = row.querySelector('input[type="checkbox"]');
-        const id = parseInt(cb.getAttribute('onchange').match(/\d+/)[0]);
-        if (checkbox.checked) {
-            selectedEmails.add(id);
-            cb.checked = true;
-            row.classList.add('selected');
-        } else {
-            selectedEmails.delete(id);
-            cb.checked = false;
-            row.classList.remove('selected');
-        }
-    });
-    updateBatchBar();
-}
-
-function clearSelection() {
-    selectedEmails.clear();
-    fetchEmails();
-}
-
-function updateBatchBar() {
-    const bar = document.getElementById('batch-bar');
-    const count = document.getElementById('selected-count');
-    if (bar && count) {
-        bar.style.display = selectedEmails.size > 0 ? 'flex' : 'none';
-        count.textContent = selectedEmails.size;
-    }
-}
-
-async function batchClassify() {
-    if (selectedEmails.size === 0) return;
-    App.showToast(`正在批量分类 ${selectedEmails.size} 封邮件...`);
-    
-    try {
-        const result = await API.post('/api/emails/batch', {
-            action: 'classify',
-            email_ids: Array.from(selectedEmails)
+        `;
+        document.getElementById("email-category").value = this.category;
+        document.getElementById("email-search").addEventListener("keydown", (event) => {
+            if (event.key === "Enter") this.applyFilters();
         });
-        
-        if (result) {
-            const successCount = result.results.filter(r => r.success).length;
-            App.showToast(`批量分类完成: ${successCount}/${result.total} 成功`);
-            selectedEmails.clear();
-            fetchEmails();
-        }
-    } catch (e) {
-        App.showToast('批量分类失败: ' + e.message, 'error');
-    }
-}
+        this.fetchList();
+    },
 
-async function batchDelete() {
-    if (selectedEmails.size === 0) return;
-    if (!confirm(`确定删除选中的 ${selectedEmails.size} 封邮件？`)) return;
-    
-    try {
-        const result = await API.post('/api/emails/batch', {
-            action: 'delete',
-            email_ids: Array.from(selectedEmails)
+    async fetchList() {
+        const box = document.getElementById("email-list");
+        App.setLoading(box);
+        const params = new URLSearchParams({
+            page: this.page,
+            limit: this.limit,
+            search: this.search,
+            category: this.category
         });
-        
-        if (result) {
-            const successCount = result.results.filter(r => r.success).length;
-            App.showToast(`批量删除完成: ${successCount}/${result.total} 成功`);
-            selectedEmails.clear();
-            fetchEmails();
+        try {
+            const result = await API.get(`/api/emails?${params.toString()}`);
+            this.renderList(result);
+        } catch (error) {
+            App.setError(box, error, () => this.fetchList());
+            App.showToast(error.message, "error");
         }
-    } catch (e) {
-        App.showToast('批量删除失败: ' + e.message, 'error');
-    }
-}
+    },
 
-async function classifySingleEmail(emailId) {
-    App.showToast('正在分类...');
-    try {
-        const email = await API.get(`/api/emails/${emailId}`);
-        if (!email || !email.email) return;
-        
-        const result = await API.post('/api/classify', {
-            sender: email.email.sender,
-            subject: email.email.subject,
-            content: email.email.content
-        });
-        
-        if (result && result.success) {
-            App.showToast(`分类完成: ${result.final_category}`);
-            fetchEmails();
-        } else {
-            App.showToast('分类失败', 'error');
+    renderList(result) {
+        const box = document.getElementById("email-list");
+        const rows = result.data || [];
+        if (!rows.length) {
+            box.innerHTML = App.empty("No emails found");
+            this.updateBatchBar();
+            return;
         }
-    } catch (e) {
-        App.showToast('分类失败: ' + e.message, 'error');
-    }
-}
-
-function getBadgeClass(category) {
-    const map = {
-        '工作': 'badge-primary', '个人': 'badge-success', '广告': 'badge-warning',
-        '垃圾': 'badge-danger', '社交': 'badge-info', '财务': 'badge-purple',
-        '技术支持': 'badge-primary', '其他': 'badge-secondary'
-    };
-    return map[category] || 'badge-info';
-}
-
-function searchEmails() {
-    emailSearch = document.getElementById('email-search').value;
-    emailCategory = document.getElementById('email-category-filter').value;
-    emailPage = 1;
-    fetchEmails();
-}
-
-function goEmailPage(page) {
-    emailPage = page;
-    fetchEmails();
-}
-
-function showCreateEmailModal() {
-    App.showModal(`
-        <div class="modal-header">
-            <h3>新建邮件</h3>
-            <button class="modal-close" onclick="App.closeModal()">&times;</button>
-        </div>
-        <div class="form-group">
-            <label>发件人</label>
-            <input type="text" id="new-email-sender" placeholder="example@mail.com">
-        </div>
-        <div class="form-group">
-            <label>主题</label>
-            <input type="text" id="new-email-subject" placeholder="邮件主题">
-        </div>
-        <div class="form-group">
-            <label>内容</label>
-            <textarea id="new-email-content" rows="5" placeholder="邮件内容"></textarea>
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-primary" onclick="createEmail()">提交</button>
-            <button class="btn" onclick="App.closeModal()">取消</button>
-        </div>
-    `);
-}
-
-async function createEmail() {
-    const sender = document.getElementById('new-email-sender').value;
-    const subject = document.getElementById('new-email-subject').value;
-    const content = document.getElementById('new-email-content').value;
-    
-    if (!sender) { App.showToast('发件人不能为空', 'error'); return; }
-    
-    try {
-        const result = await API.post('/api/emails', { sender, subject, content });
-        if (result && result.success) {
-            App.closeModal();
-            App.showToast('邮件创建成功');
-            fetchEmails();
-        }
-    } catch (e) {
-        App.showToast('创建失败: ' + e.message, 'error');
-    }
-}
-
-async function viewEmailDetail(emailId) {
-    try {
-        const data = await API.get(`/api/emails/${emailId}`);
-        if (!data) return;
-        
-        const e = data.email;
-        const classifications = data.classifications || [];
-        const finalResult = data.final_result;
-        const paxosLogs = data.paxos_logs || [];
-        
-        let classHtml = classifications.map(c => `
-            <tr>
-                <td>${c.agent_name}</td>
-                <td>${c.method}</td>
-                <td><span class="badge ${getBadgeClass(c.category)}">${c.category}</span></td>
-                <td>${(c.confidence * 100).toFixed(1)}%</td>
+        const allChecked = rows.length > 0 && rows.every((mail) => this.selected.has(mail.id));
+        const htmlRows = rows.map((mail) => `
+            <tr class="${this.selected.has(mail.id) ? "selected-row" : ""}">
+                <td><input type="checkbox" ${this.selected.has(mail.id) ? "checked" : ""} onchange="EmailPage.toggleSelect(${mail.id}, this.checked)"></td>
+                <td>${mail.id}</td>
+                <td>${App.escape(mail.sender)}</td>
+                <td><div class="text-truncate">${App.escape(mail.subject || "-")}</div></td>
+                <td>${App.badge(mail.final_category)}</td>
+                <td>${App.escape(mail.final_method || "-")}</td>
+                <td>${App.formatDate(mail.created_at)}</td>
+                <td>
+                    <button class="btn btn-sm" type="button" onclick="EmailPage.view(${mail.id})">Detail</button>
+                    <button class="btn btn-sm" type="button" onclick="EmailPage.openEditModal(${mail.id})">Edit</button>
+                    <button class="btn btn-sm btn-primary" type="button" onclick="EmailPage.classify(${mail.id})">Classify</button>
+                    <button class="btn btn-sm" type="button" onclick="EmailPage.viewClassifyResult(${mail.id})">Result</button>
+                    <button class="btn btn-sm btn-danger" type="button" onclick="EmailPage.remove(${mail.id})">Delete</button>
+                </td>
             </tr>
-        `).join('');
-        
-        let paxosHtml = paxosLogs.map(log => {
-            const time = new Date(log.created_at).toLocaleString('zh-CN');
-            return `<div class="paxos-event">
-                <div class="time">${time}</div>
-                <div class="msg">[${log.phase}] 提议${log.proposal_number}: ${log.proposed_value} → ${log.result}</div>
-            </div>`;
-        }).join('');
-        
+        `).join("");
+        box.innerHTML = `
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" ${allChecked ? "checked" : ""} onchange="EmailPage.togglePageSelection(this.checked)"></th>
+                            <th>ID</th><th>Sender</th><th>Subject</th><th>Category</th><th>Method</th><th>Created</th><th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${htmlRows}</tbody>
+                </table>
+            </div>
+            ${App.renderPagination(result.total || 0, result.page || this.page, result.limit || this.limit, "goEmailPage")}
+        `;
+        this.currentRows = rows;
+        this.updateBatchBar();
+    },
+
+    toggleSelect(id, checked) {
+        if (checked) this.selected.add(id);
+        else this.selected.delete(id);
+        this.fetchList();
+    },
+
+    togglePageSelection(checked) {
+        (this.currentRows || []).forEach((mail) => {
+            if (checked) this.selected.add(mail.id);
+            else this.selected.delete(mail.id);
+        });
+        this.fetchList();
+    },
+
+    clearSelection() {
+        this.selected.clear();
+        this.fetchList();
+    },
+
+    updateBatchBar() {
+        const bar = document.getElementById("email-batch-bar");
+        const count = document.getElementById("email-selected-count");
+        if (!bar || !count) return;
+        count.textContent = this.selected.size;
+        bar.classList.toggle("hidden", this.selected.size === 0);
+    },
+
+    applyFilters() {
+        this.search = document.getElementById("email-search").value.trim();
+        this.category = document.getElementById("email-category").value;
+        this.page = 1;
+        this.fetchList();
+    },
+
+    resetFilters() {
+        this.search = "";
+        this.category = "";
+        this.page = 1;
+        this.load();
+    },
+
+    openCreateModal() {
+        this.showEmailForm("New Email", {}, "EmailPage.create()");
+    },
+
+    async openEditModal(id) {
+        try {
+            const result = await API.get(`/api/emails/${id}`);
+            this.showEmailForm(`Edit Email #${id}`, result.email || {}, `EmailPage.update(${id})`);
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    showEmailForm(title, mail, action) {
         App.showModal(`
             <div class="modal-header">
-                <h3>邮件详情 #${e.id}</h3>
-                <button class="modal-close" onclick="App.closeModal()">&times;</button>
+                <h3>${App.escape(title)}</h3>
+                <button class="modal-close" type="button" onclick="App.closeModal()">x</button>
             </div>
-            <div class="detail-section">
-                <div class="detail-row"><span class="detail-label">发件人:</span><span class="detail-value">${e.sender}</span></div>
-                <div class="detail-row"><span class="detail-label">主题:</span><span class="detail-value">${e.subject || '-'}</span></div>
-                <div class="detail-row"><span class="detail-label">内容:</span><span class="detail-value">${e.content || '-'}</span></div>
-                ${finalResult ? `<div class="detail-row"><span class="detail-label">最终分类:</span><span class="detail-value"><span class="badge ${getBadgeClass(finalResult.category)}">${finalResult.category}</span> (${finalResult.method})</span></div>` : ''}
+            <div class="form-grid">
+                <div class="form-group"><label>Sender</label><input id="email-form-sender" value="${App.escape(mail.sender || "")}" placeholder="sender@example.com"></div>
+                <div class="form-group"><label>Subject</label><input id="email-form-subject" value="${App.escape(mail.subject || "")}" placeholder="Email subject"></div>
+                <div class="form-group"><label>Content</label><textarea id="email-form-content" placeholder="Email content">${App.escape(mail.content || "")}</textarea></div>
             </div>
-            ${classifications.length > 0 ? `
-            <h4 style="margin:16px 0 8px">Agent分类结果</h4>
-            <table><thead><tr><th>Agent</th><th>方法</th><th>分类</th><th>置信度</th></tr></thead>
-            <tbody>${classHtml}</tbody></table>` : ''}
-            ${paxosLogs.length > 0 ? `
-            <h4 style="margin:16px 0 8px">Paxos共识过程</h4>
-            <div class="paxos-timeline">${paxosHtml}</div>` : ''}
+            <div class="form-actions">
+                <button class="btn" type="button" onclick="App.closeModal()">Cancel</button>
+                <button class="btn btn-primary" type="button" onclick="${action}">Save</button>
+            </div>
         `);
-    } catch (e) {
-        App.showToast('加载详情失败: ' + e.message, 'error');
-    }
-}
+    },
 
-async function deleteEmail(id) {
-    if (!confirm('确定删除该邮件？')) return;
-    try {
-        const result = await API.delete(`/api/emails/${id}`);
-        if (result && result.success) {
-            App.showToast('删除成功');
-            fetchEmails();
+    formData() {
+        return {
+            sender: document.getElementById("email-form-sender").value.trim(),
+            subject: document.getElementById("email-form-subject").value.trim(),
+            content: document.getElementById("email-form-content").value.trim()
+        };
+    },
+
+    async create() {
+        const data = this.formData();
+        if (!data.sender) {
+            App.showToast("Sender is required", "warning");
+            return;
         }
-    } catch (e) {
-        App.showToast('删除失败: ' + e.message, 'error');
+        try {
+            await API.post("/api/emails", data);
+            App.closeModal();
+            App.showToast("Email created");
+            this.fetchList();
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    async update(id) {
+        const data = this.formData();
+        if (!data.sender) {
+            App.showToast("Sender is required", "warning");
+            return;
+        }
+        try {
+            await API.put(`/api/emails/${id}`, data);
+            App.closeModal();
+            App.showToast("Email updated");
+            this.fetchList();
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    async view(id) {
+        try {
+            const result = await API.get(`/api/emails/${id}`);
+            this.showEmailDetail(result, `Email #${id}`);
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    async viewClassifyResult(id) {
+        try {
+            const result = await API.get(`/api/classify/${id}/result`);
+            this.showEmailDetail(result, `Classification Result #${id}`);
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    showEmailDetail(result, title) {
+        const mail = result.email || {};
+        const classifications = result.classifications || [];
+        const logs = result.paxos_logs || [];
+        const finalResult = result.final_result;
+        App.showModal(`
+            <div class="modal-header">
+                <h3>${App.escape(title)}</h3>
+                <button class="modal-close" type="button" onclick="App.closeModal()">x</button>
+            </div>
+            <div class="grid">
+                <div><strong>Sender:</strong> ${App.escape(mail.sender || "-")}</div>
+                <div><strong>Subject:</strong> ${App.escape(mail.subject || "-")}</div>
+                <div><strong>Content:</strong><p>${App.escape(mail.content || "-")}</p></div>
+                <div><strong>Final:</strong> ${finalResult ? App.badge(finalResult.category) + " " + App.escape(finalResult.method || "") : '<span class="text-muted">Unclassified</span>'}</div>
+            </div>
+            <h4>Agent Results</h4>
+            ${this.renderClassifications(classifications)}
+            <h4>Paxos Logs</h4>
+            ${this.renderLogs(logs)}
+        `);
+    },
+
+    renderClassifications(items) {
+        if (!items.length) return App.empty("No agent results");
+        return `
+            <div class="table-wrap"><table>
+                <thead><tr><th>Agent</th><th>Method</th><th>Category</th><th>Confidence</th></tr></thead>
+                <tbody>${items.map((item) => `
+                    <tr>
+                        <td>${App.escape(item.agent_name || "-")}</td>
+                        <td>${App.escape(item.method || "-")}</td>
+                        <td>${App.badge(item.category)}</td>
+                        <td>${App.percent(item.confidence)}</td>
+                    </tr>
+                `).join("")}</tbody>
+            </table></div>
+        `;
+    },
+
+    renderLogs(items) {
+        if (!items.length) return App.empty("No Paxos logs");
+        return `<div class="timeline">${items.map((log) => `
+            <div class="timeline-item">
+                <strong>${App.escape(log.phase || "-")}</strong>
+                <div class="text-muted">proposal ${App.escape(log.proposal_id || "-")} | ${App.escape(log.value || "-")} | ${App.escape(log.result || "-")}</div>
+            </div>
+        `).join("")}</div>`;
+    },
+
+    async classify(id) {
+        await this.runBatch("classify", [id], "Classifying email...", "Classification complete");
+    },
+
+    async batchClassify() {
+        await this.runBatch("classify", Array.from(this.selected), "Classifying selected emails...", "Batch classification complete");
+    },
+
+    async batchDelete() {
+        if (!confirm(`Delete ${this.selected.size} selected email(s)?`)) return;
+        await this.runBatch("delete", Array.from(this.selected), "Deleting selected emails...", "Batch delete complete");
+    },
+
+    async runBatch(action, ids, loadingMessage, successMessage) {
+        if (!ids.length) return;
+        try {
+            App.showToast(loadingMessage, "info");
+            const result = await API.post("/api/emails/batch", { action, email_ids: ids });
+            const failures = (result.results || []).filter((item) => !item.success);
+            if (failures.length) throw new Error(`${failures.length} item(s) failed`);
+            ids.forEach((id) => this.selected.delete(id));
+            App.showToast(successMessage);
+            this.fetchList();
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    async remove(id) {
+        if (!confirm("Delete this email?")) return;
+        try {
+            await API.delete(`/api/emails/${id}`);
+            this.selected.delete(id);
+            App.showToast("Email deleted");
+            this.fetchList();
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
     }
+};
+
+function goEmailPage(page) {
+    EmailPage.page = page;
+    EmailPage.fetchList();
 }

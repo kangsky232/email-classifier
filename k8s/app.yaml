@@ -35,6 +35,12 @@ spec:
           value: rabbitmq
         - name: RABBITMQ_PORT
           value: "5672"
+        - name: ACCEPTOR_1_URL
+          value: http://mail-acceptor-1:8503
+        - name: ACCEPTOR_2_URL
+          value: http://mail-acceptor-2:8504
+        - name: ACCEPTOR_3_URL
+          value: http://mail-acceptor-3:8505
         - name: FLASK_ENV
           value: production
         ports:

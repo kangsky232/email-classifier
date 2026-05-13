@@ -1,127 +1,160 @@
 import os
+import re
+
 from config import Config
 
-USE_SQLITE = os.getenv('USE_SQLITE', 'true').lower() == 'true'
 
-if USE_SQLITE:
-    import sqlite3
-    
-    class Database:
-        def __init__(self):
-            self.connection = None
+USE_SQLITE = os.getenv("USE_SQLITE", "true").lower() == "true"
+
+
+class Database:
+    def __init__(self):
+        self.connection = None
+        self.is_sqlite = USE_SQLITE
+        self.connect()
+
+    def connect(self):
+        if self.is_sqlite:
+            self._connect_sqlite()
+        else:
+            self._connect_mysql()
+
+    def _connect_sqlite(self):
+        import sqlite3
+
+        db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "mail_system.db")
+        self.connection = sqlite3.connect(db_path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA foreign_keys = ON")
+        self._init_sqlite_tables()
+
+    def _connect_mysql(self):
+        import pymysql
+
+        self.connection = pymysql.connect(
+            host=Config.DB_HOST,
+            port=int(Config.DB_PORT),
+            user=Config.DB_USER,
+            password=Config.DB_PASSWORD,
+            database=Config.DB_NAME,
+            charset="utf8mb4",
+            autocommit=False,
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+
+    def _init_sqlite_tables(self):
+        sql_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "init.sql")
+        if not os.path.exists(sql_file):
+            return
+
+        with open(sql_file, "r", encoding="utf-8") as f:
+            content = self._mysql_sql_to_sqlite(f.read())
+
+        for stmt in self._split_sql(content):
+            upper = stmt.upper()
+            if not stmt or upper.startswith("CREATE DATABASE") or upper.startswith("USE "):
+                continue
+            try:
+                self.connection.execute(stmt)
+            except Exception as exc:
+                print(f"SQLite init skipped statement: {exc}")
+        self.connection.commit()
+
+    def _mysql_sql_to_sqlite(self, content):
+        content = re.sub(
+            r"INT\s+PRIMARY\s+KEY\s+AUTO_INCREMENT",
+            "INTEGER PRIMARY KEY AUTOINCREMENT",
+            content,
+            flags=re.IGNORECASE,
+        )
+        content = re.sub(r"\bJSON\b", "TEXT", content, flags=re.IGNORECASE)
+        content = re.sub(
+            r"\s+ON\s+UPDATE\s+CURRENT_TIMESTAMP",
+            "",
+            content,
+            flags=re.IGNORECASE,
+        )
+        content = re.sub(
+            r"ON\s+DUPLICATE\s+KEY\s+UPDATE\s+config_value\s*=\s*VALUES\(config_value\)",
+            "ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value",
+            content,
+            flags=re.IGNORECASE,
+        )
+        content = re.sub(
+            r"DEFAULT\s+CHARACTER\s+SET\s+\w+\s+COLLATE\s+\w+",
+            "",
+            content,
+            flags=re.IGNORECASE,
+        )
+        return content
+
+    def _split_sql(self, content):
+        statements = []
+        current = []
+        in_string = False
+        quote = ""
+
+        for char in content:
+            if char in ("'", '"'):
+                if not in_string:
+                    in_string = True
+                    quote = char
+                elif quote == char:
+                    in_string = False
+            if char == ";" and not in_string:
+                statements.append("".join(current).strip())
+                current = []
+            else:
+                current.append(char)
+
+        tail = "".join(current).strip()
+        if tail:
+            statements.append(tail)
+        return statements
+
+    def _ensure_connection(self):
+        if self.connection is None:
             self.connect()
-        
-        def connect(self):
-            try:
-                db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'mail_system.db')
-                self.connection = sqlite3.connect(db_path, check_same_thread=False)
-                self.connection.row_factory = sqlite3.Row
-                self.connection.execute("PRAGMA foreign_keys = ON")
-                self._init_tables()
-            except Exception as e:
-                print(f"SQLite连接失败: {e}")
-                self.connection = None
-        
-        def _init_tables(self):
-            sql_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'init.sql')
-            if os.path.exists(sql_file):
-                with open(sql_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    content = content.replace('INT PRIMARY KEY AUTO_INCREMENT', 'INTEGER PRIMARY KEY AUTOINCREMENT')
-                    content = content.replace('JSON', 'TEXT')
-                    content = content.replace('ON UPDATE CURRENT_TIMESTAMP', '')
-                    content = content.replace('ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)', 'ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value')
-                    content = content.replace('ENGINE=InnoDB', '')
-                    content = content.replace('DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci', '')
-                    for stmt in content.split(';'):
-                        stmt = stmt.strip()
-                        if stmt and not stmt.startswith('--'):
-                            upper = stmt.upper()
-                            if 'CREATE DATABASE' in upper or upper.startswith('USE '):
-                                continue
-                            try:
-                                self.connection.execute(stmt)
-                            except Exception:
-                                pass
-                self.connection.commit()
-        
-        def execute(self, sql, params=None):
-            if not self.connection:
-                self.connect()
-            try:
-                sql = sql.replace('%s', '?')
-                cursor = self.connection.cursor()
-                if params:
-                    cursor.execute(sql, params)
-                else:
-                    cursor.execute(sql)
-                self.connection.commit()
-                return cursor
-            except Exception as e:
-                print(f"执行SQL失败: {e}")
-                raise
-        
-        def fetch_one(self, sql, params=None):
-            cursor = self.execute(sql, params)
-            row = cursor.fetchone()
-            if row:
-                return dict(row)
+        elif not self.is_sqlite:
+            self.connection.ping(reconnect=True)
+
+    def _adapt_sql(self, sql):
+        if self.is_sqlite:
+            return sql.replace("%s", "?")
+        return sql
+
+    def execute(self, sql, params=None):
+        self._ensure_connection()
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(self._adapt_sql(sql), params or ())
+            self.connection.commit()
+            return cursor
+        except Exception:
+            self.connection.rollback()
+            cursor.close()
+            raise
+
+    def fetch_one(self, sql, params=None):
+        cursor = self.execute(sql, params)
+        row = cursor.fetchone()
+        cursor.close()
+        if row is None:
             return None
-        
-        def fetch_all(self, sql, params=None):
-            cursor = self.execute(sql, params)
-            rows = cursor.fetchall()
+        return dict(row) if self.is_sqlite else row
+
+    def fetch_all(self, sql, params=None):
+        cursor = self.execute(sql, params)
+        rows = cursor.fetchall()
+        cursor.close()
+        if self.is_sqlite:
             return [dict(row) for row in rows]
-        
-        def close(self):
-            if self.connection:
-                self.connection.close()
-else:
-    import pymysql
-    
-    class Database:
-        def __init__(self):
+        return rows
+
+    def close(self):
+        if self.connection:
+            self.connection.close()
             self.connection = None
-            self.connect()
-        
-        def connect(self):
-            try:
-                self.connection = pymysql.connect(
-                    host=Config.DB_HOST,
-                    port=Config.DB_PORT,
-                    user=Config.DB_USER,
-                    password=Config.DB_PASSWORD,
-                    database=Config.DB_NAME,
-                    charset='utf8mb4',
-                    cursorclass=pymysql.cursors.DictCursor
-                )
-            except Exception as e:
-                print(f"数据库连接失败: {e}")
-                self.connection = None
-        
-        def execute(self, sql, params=None):
-            if not self.connection:
-                self.connect()
-            try:
-                with self.connection.cursor() as cursor:
-                    cursor.execute(sql, params)
-                    self.connection.commit()
-                    return cursor
-            except Exception as e:
-                print(f"执行SQL失败: {e}")
-                self.connection.rollback()
-                raise
-        
-        def fetch_one(self, sql, params=None):
-            cursor = self.execute(sql, params)
-            return cursor.fetchone()
-        
-        def fetch_all(self, sql, params=None):
-            cursor = self.execute(sql, params)
-            return cursor.fetchall()
-        
-        def close(self):
-            if self.connection:
-                self.connection.close()
+
 
 db = Database()

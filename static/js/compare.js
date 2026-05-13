@@ -24,8 +24,8 @@ const ComparePage = {
         try {
             const data = await API.get('/api/emails?limit=100');
             const select = document.getElementById('compare-email-select');
-            const emails = data.emails || [];
-            const classified = emails.filter(e => e.category && e.category !== '未分类');
+            const emails = data.data || [];
+            const classified = emails.filter(e => e.final_category && e.final_category !== '未分类');
             
             if (classified.length === 0) {
                 select.innerHTML = '<option value="">暂无已分类邮件</option>';
