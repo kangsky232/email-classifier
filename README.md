@@ -29,16 +29,16 @@
 
 ### 角色定义
 
-| 概念 | 是什么 | 干什么 |
-|------|--------|--------|
-| **Classifier（分类器）** | ML 模型 或 LLM Agent | 看邮件内容，给出分类意见 |
-| **Agent（智能体）** | LLM 驱动的分类器，每个有不同 System Prompt | 从不同视角分析邮件，输出分类+置信度+推理过程 |
-| **Acceptor（接受者）** | Paxos 协议中的投票者 | 只比较 proposal_id 大小，决定承诺/接受/拒绝。完全不碰邮件内容 |
-| **Proposer（提议者）** | Paxos 协议中的发起方 | 收集 Agent 意见，向 Acceptor 发起两阶段投票 |
+| 概念                  | 是什么                            | 干什么                                     |
+| ------------------- | ------------------------------ | --------------------------------------- |
+| **Classifier（分类器）** | ML 模型 或 LLM Agent              | 看邮件内容，给出分类意见                            |
+| **Agent（智能体）**      | LLM 驱动的分类器，每个有不同 System Prompt | 从不同视角分析邮件，输出分类+置信度+推理过程                 |
+| **Acceptor（接受者）**   | Paxos 协议中的投票者                  | 只比较 proposal\_id 大小，决定承诺/接受/拒绝。完全不碰邮件内容 |
+| **Proposer（提议者）**   | Paxos 协议中的发起方                  | 收集 Agent 意见，向 Acceptor 发起两阶段投票          |
 
 **关键区分**：Classifier 和 Acceptor 是两个独立角色。同一个节点进程上同时运行了分类服务和 Acceptor 服务，但逻辑完全分离。
 
----
+***
 
 ## 二、核心流程
 
@@ -72,12 +72,13 @@
 
 ### Paxos 关键机制
 
-- **多数派原则**：3 个 Acceptor 中至少需要 2 票（3/2+1）
+### **多数派原则**：3 个 Acceptor 中至少需要 2 票（3/2+1）
+
 - **编号递增**：Acceptor 只认可编号 ≥ 已承诺编号的提案
-- **冲突拒绝**：一旦承诺了更高的 proposal_id，旧编号提案被永久拒绝
+- **冲突拒绝**：一旦承诺了更高的 proposal\_id，旧编号提案被永久拒绝
 - **容错**：1 个 Acceptor 宕机，剩余 2 个仍可达成共识
 
----
+***
 
 ## 三、文件结构
 
@@ -115,22 +116,22 @@ email-classifier/
 └── templates/                # HTML 模板
 ```
 
----
+***
 
 ## 四、与参考视频的关系
 
 参考视频（B站 BV1XaRtBiEh6）使用手动投票模式演示 Paxos（用户输入 y/n）。本项目做了以下改进：
 
-| 对比项 | 参考视频 | 本项目 |
-|--------|---------|--------|
-| Paxos 投票 | 手动输入 y/n | Agent 自动决策 + HTTP 通信 |
-| 分类方式 | MapReduce + 朴素贝叶斯 | ML + LLM Agent（多视角） |
-| 存储 | GFS + 一致性哈希 | MySQL/SQLite（数据库方式） |
-| 前端 | Streamlit | Flask + 原生 JS |
-| 部署 | 无 | Docker + K8s + Istio |
-| 额外功能 | - | 消息队列、远程 Agent、WebSocket 实时推送 |
+| 对比项      | 参考视频              | 本项目                          |
+| -------- | ----------------- | ---------------------------- |
+| Paxos 投票 | 手动输入 y/n          | Agent 自动决策 + HTTP 通信         |
+| 分类方式     | MapReduce + 朴素贝叶斯 | ML + LLM Agent（多视角）          |
+| 存储       | GFS + 一致性哈希       | MySQL/SQLite（数据库方式）          |
+| 前端       | Streamlit         | Flask + 原生 JS                |
+| 部署       | 无                 | Docker + K8s + Istio         |
+| 额外功能     | -                 | 消息队列、远程 Agent、WebSocket 实时推送 |
 
----
+***
 
 ## 五、演示步骤
 
@@ -139,6 +140,7 @@ email-classifier/
 需要 4 个终端：
 
 **终端 1-3（Acceptor 节点）:**
+
 ```bash
 cd email-classifier
 python agent_service.py --role security  --port 8503 --id acceptor-1
@@ -147,6 +149,7 @@ python agent_service.py --role general   --port 8505 --id acceptor-3
 ```
 
 **终端 4（主应用）:**
+
 ```bash
 cd email-classifier
 python app.py
@@ -194,24 +197,24 @@ python app.py
 - **Paxos日志**：数据库记录的所有共识历史
 - **数据统计**：分类分布图、趋势
 
----
+***
 
 ## 六、技术要点
 
 ### LLM Agent 三种角色
 
-| Agent | 角色 | System Prompt 侧重点 |
-|-------|------|---------------------|
-| 安全专家 | security | 钓鱼识别、欺诈检测、链接安全、账户威胁 |
-| 商务助理 | business | 会议安排、工作汇报、deadline、商务沟通 |
-| 通用分类 | general | 综合判断邮件目的、发件人身份、紧急程度 |
+| Agent | 角色       | System Prompt 侧重点       |
+| ----- | -------- | ----------------------- |
+| 安全专家  | security | 钓鱼识别、欺诈检测、链接安全、账户威胁     |
+| 商务助理  | business | 会议安排、工作汇报、deadline、商务沟通 |
+| 通用分类  | general  | 综合判断邮件目的、发件人身份、紧急程度     |
 
 ### Paxos 两阶段协议
 
-1. **Prepare 阶段**：Proposer 发送 proposal_id → Acceptor 比较编号 → 返回 Promise/Reject
+1. **Prepare 阶段**：Proposer 发送 proposal\_id → Acceptor 比较编号 → 返回 Promise/Reject
 2. **Accept 阶段**：Proposer 携带 value 发起确认 → Acceptor 校验 → 返回 Accepted/Reject
 3. **多数派**：3 个中至少 2 个同意
-4. **一致性**：Acceptor 的状态（promised_id、accepted_id）保证不会接受更低编号的提案
+4. **一致性**：Acceptor 的状态（promised\_id、accepted\_id）保证不会接受更低编号的提案
 
 ### LLM API
 
@@ -220,7 +223,7 @@ python app.py
 - 环境变量：`DEEPSEEK_API_KEY`
 - 无 Key 时自动降级为关键词匹配
 
----
+***
 
 ## 七、问题记录
 
@@ -234,6 +237,7 @@ Agent 放在分类层，作为 LLM 驱动的智能分类器。3 个 Agent 各自
 
 **Q: Agent 的作用会不会太牵强？**
 对比：
+
 - ❌ Agent 作为 Paxos 投票小工具 → 几行 if 代码就搞定，硬贴标签
 - ✅ Agent 作为 LLM 分类器 → 语义理解、多步推理、可解释性、多视角分析，传统代码做不到
 
@@ -245,3 +249,4 @@ Agent 放在分类层，作为 LLM 驱动的智能分类器。3 个 Agent 各自
 - Paxos coordinator 支持双模式：HTTP 远程（分布式演示）和本地内存（开发测试）
 - 分类调度器同时运行 ML 和 LLM 两套 Agent，ML 作为对比参考，LLM 作为决策主体
 - 3 个节点共享进程运行 Classifier + Acceptor，逻辑分离但部署在同一进程，减少终端数量
+
