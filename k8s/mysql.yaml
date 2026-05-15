@@ -93,12 +93,20 @@ data:
   init.sql: |
     CREATE DATABASE IF NOT EXISTS mail_system DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
     USE mail_system;
+    CREATE TABLE IF NOT EXISTS users (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        username VARCHAR(50) NOT NULL UNIQUE,
+        password VARCHAR(255) NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS emails (
         id INT PRIMARY KEY AUTO_INCREMENT,
         sender VARCHAR(255) NOT NULL,
         subject VARCHAR(500),
         content TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        user_id INT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     );
     CREATE TABLE IF NOT EXISTS classifications (
         id INT PRIMARY KEY AUTO_INCREMENT,

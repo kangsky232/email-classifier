@@ -43,6 +43,10 @@ class Database:
         )
 
     def _init_sqlite_tables(self):
+        self._run_init_sql()
+        self._migrate_sqlite()
+
+    def _run_init_sql(self):
         sql_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "init.sql")
         if not os.path.exists(sql_file):
             return
@@ -58,6 +62,13 @@ class Database:
                 self.connection.execute(stmt)
             except Exception as exc:
                 print(f"SQLite init skipped statement: {exc}")
+        self.connection.commit()
+
+    def _migrate_sqlite(self):
+        try:
+            self.connection.execute("ALTER TABLE emails ADD COLUMN user_id INTEGER")
+        except Exception:
+            pass
         self.connection.commit()
 
     def _mysql_sql_to_sqlite(self, content):

@@ -1,17 +1,89 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from config import Config
-from database.models import Email, Classification, PaxosLog, FinalResult, SystemConfig
+from database.models import Email, Classification, PaxosLog, FinalResult, SystemConfig, User
 from agents.classifier import classifier
 from mq.producer import producer
 from mq.consumer import consumer
 import threading
 import requests
+import time
+import csv
+import io
+import os
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
-CORS(app)
+app.secret_key = Config.SECRET_KEY
+CORS(app, supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+MQ_AVAILABLE = False
+
+def _check_mq_connection():
+    global MQ_AVAILABLE
+    MQ_AVAILABLE = producer.is_connected()
+    if producer.using_rabbitmq():
+        print("RabbitMQ 已连接，消息队列功能可用")
+    elif MQ_AVAILABLE:
+        print("内存队列模式（功能正常，消息不持久化）")
+    else:
+        print("消息队列不可用")
+
+_check_mq_connection()
+
+def _get_current_user():
+    if "user_id" in session:
+        return session.get("user_id")
+    return None
+
+# ============================================
+# Auth
+# ============================================
+
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    data = request.get_json()
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"error": "用户名和密码不能为空"}), 400
+    if len(username) < 2 or len(password) < 4:
+        return jsonify({"error": "用户名至少2位，密码至少4位"}), 400
+    try:
+        user_id = User.create(username, password)
+        session["user_id"] = user_id
+        session["username"] = username
+        return jsonify({"success": True, "user": {"id": user_id, "username": username}})
+    except Exception:
+        return jsonify({"error": "用户名已存在"}), 409
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    data = request.get_json()
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"error": "用户名和密码不能为空"}), 400
+    user = User.authenticate(username, password)
+    if not user:
+        return jsonify({"error": "用户名或密码错误"}), 401
+    session["user_id"] = user["id"]
+    session["username"] = user["username"]
+    return jsonify({"success": True, "user": {"id": user["id"], "username": user["username"]}})
+
+@app.route('/api/auth/logout', methods=['POST'])
+def auth_logout():
+    session.clear()
+    return jsonify({"success": True})
+
+@app.route('/api/auth/me', methods=['GET'])
+def auth_me():
+    user_id = _get_current_user()
+    if not user_id:
+        return jsonify({"authenticated": False, "user": None})
+    user = User.get_by_id(user_id)
+    return jsonify({"authenticated": True, "user": {"id": user["id"], "username": user["username"]}}) if user else jsonify({"authenticated": False, "user": None})
 
 @app.route('/')
 def index():
@@ -23,7 +95,8 @@ def get_emails():
     limit = request.args.get('limit', 10, type=int)
     search = request.args.get('search', None)
     category = request.args.get('category', None)
-    result = Email.get_list(page, limit, search, category)
+    user_id = _get_current_user()
+    result = Email.get_list(page, limit, search, category, user_id=user_id)
     return jsonify(result)
 
 @app.route('/api/emails', methods=['POST'])
@@ -32,10 +105,12 @@ def create_email():
     if not data or not data.get('sender'):
         return jsonify({"error": "发件人不能为空"}), 400
     
+    user_id = _get_current_user()
     email_id = Email.create(
         sender=data.get('sender', ''),
         subject=data.get('subject', ''),
-        content=data.get('content', '')
+        content=data.get('content', ''),
+        user_id=user_id
     )
     
     producer.send_email({
@@ -43,6 +118,14 @@ def create_email():
         "sender": data.get('sender', ''),
         "subject": data.get('subject', ''),
         "content": data.get('content', '')
+    })
+    
+    socketio.emit('mq_event', {
+        'queue': 'email_input',
+        'type': 'new_email',
+        'email_id': email_id,
+        'subject': data.get('subject', ''),
+        'mode': 'RabbitMQ' if producer.using_rabbitmq() else '内存队列'
     })
     
     email = Email.get_by_id(email_id)
@@ -122,16 +205,74 @@ def batch_emails():
     
     return jsonify({"results": results, "total": len(email_ids)})
 
+@app.route('/api/emails/export', methods=['GET'])
+def export_emails():
+    user_id = _get_current_user()
+    result = Email.get_list(1, 10000, user_id=user_id)
+    emails = result.get("data", [])
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["ID", "发件人", "主题", "内容", "分类结果", "分类方法", "创建时间"])
+    for e in emails:
+        writer.writerow([
+            e.get("id", ""),
+            e.get("sender", ""),
+            e.get("subject", ""),
+            e.get("content", ""),
+            e.get("final_category", ""),
+            e.get("final_method", ""),
+            e.get("created_at", "")
+        ])
+    output.seek(0)
+    return Response(
+        output.getvalue().encode("utf-8-sig"),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=emails_export.csv"}
+    )
+
+@app.route('/api/emails/import', methods=['POST'])
+def import_emails():
+    if "file" not in request.files:
+        return jsonify({"error": "请上传CSV文件"}), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "请选择文件"}), 400
+
+    user_id = _get_current_user()
+    try:
+        content = file.read().decode("utf-8-sig")
+        reader = csv.reader(io.StringIO(content))
+        header = next(reader, None)
+        imported = 0
+        errors = []
+        for row_num, row in enumerate(reader, start=2):
+            if len(row) < 3:
+                errors.append({"row": row_num, "error": "缺少列"})
+                continue
+            sender = (row[1] if len(row) > 1 else "").strip() or (row[0] if len(row) > 0 else "").strip()
+            subject = (row[2] if len(row) > 2 else "").strip()
+            body = (row[3] if len(row) > 3 else "").strip()
+            if not sender:
+                errors.append({"row": row_num, "error": "缺少发件人"})
+                continue
+            Email.create(sender, subject, body, user_id=user_id)
+            imported += 1
+        return jsonify({"success": True, "imported": imported, "errors": errors})
+    except Exception as e:
+        return jsonify({"error": f"解析失败: {str(e)}"}), 400
+
 @app.route('/api/classify', methods=['POST'])
 def classify_email():
     data = request.get_json()
     if not data or not data.get('content'):
         return jsonify({"error": "邮件内容不能为空"}), 400
     
+    user_id = _get_current_user()
     email_id = Email.create(
         sender=data.get('sender', 'unknown'),
         subject=data.get('subject', ''),
-        content=data.get('content', '')
+        content=data.get('content', ''),
+        user_id=user_id
     )
     
     socketio.emit('classify_progress', {
@@ -156,6 +297,14 @@ def classify_email():
     producer.send_classification({
         "email_id": email_id,
         "result": result
+    })
+    
+    socketio.emit('mq_event', {
+        'queue': 'classification_result',
+        'type': 'classification_result',
+        'email_id': email_id,
+        'category': result.get('final_category', ''),
+        'mode': 'RabbitMQ' if producer.using_rabbitmq() else '内存队列'
     })
     
     return jsonify(result)
@@ -475,11 +624,33 @@ def paxos_demo_conflict():
 
 @app.route('/api/queue/status', methods=['GET'])
 def get_queue_status():
-    try:
-        queues = consumer.get_queue_info()
-        return jsonify({"queues": queues})
-    except:
-        return jsonify({"queues": []})
+    return jsonify({
+        "mq_available": producer.is_connected(),
+        "using_rabbitmq": producer.using_rabbitmq(),
+        "mode": "RabbitMQ" if producer.using_rabbitmq() else "内存队列",
+        "queues": consumer.get_queue_info()
+    })
+
+@app.route('/api/queue/messages', methods=['GET'])
+def get_queue_messages():
+    limit = request.args.get('limit', 20, type=int)
+    messages = consumer.get_recent_messages(limit)
+    return jsonify({
+        "mq_available": producer.is_connected(),
+        "using_rabbitmq": producer.using_rabbitmq(),
+        "messages": messages,
+        "total": len(messages)
+    })
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    import platform
+    return jsonify({
+        "status": "healthy",
+        "mq_available": MQ_AVAILABLE,
+        "python_version": platform.python_version(),
+        "agents": len(classifier.get_all_agents())
+    })
 
 @socketio.on('connect')
 def handle_connect():

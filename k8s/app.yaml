@@ -3,6 +3,9 @@ kind: Deployment
 metadata:
   name: mail-app
   namespace: mail-system
+  labels:
+    app: mail-app
+    version: v1
 spec:
   replicas: 3
   selector:
@@ -12,16 +15,18 @@ spec:
     metadata:
       labels:
         app: mail-app
+        version: v1
     spec:
       containers:
       - name: app
         image: mail-app:latest
         imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: app-config
         env:
         - name: DB_HOST
           value: mysql
-        - name: DB_PORT
-          value: "3306"
         - name: DB_USER
           value: root
         - name: DB_PASSWORD
@@ -29,53 +34,65 @@ spec:
             secretKeyRef:
               name: mysql-secret
               key: password
-        - name: DB_NAME
-          value: mail_system
         - name: RABBITMQ_HOST
           value: rabbitmq
-        - name: RABBITMQ_PORT
-          value: "5672"
-        - name: ACCEPTOR_1_URL
-          value: http://mail-acceptor-1:8503
-        - name: ACCEPTOR_2_URL
-          value: http://mail-acceptor-2:8504
-        - name: ACCEPTOR_3_URL
-          value: http://mail-acceptor-3:8505
-        - name: FLASK_ENV
-          value: production
+        - name: RABBITMQ_USER
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-secret
+              key: username
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-secret
+              key: password
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: llm-secret
+              key: deepseek
+              optional: true
         ports:
         - containerPort: 5000
+          name: http
         resources:
           requests:
             memory: "128Mi"
             cpu: "100m"
           limits:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "512Mi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /
             port: 5000
           initialDelaySeconds: 30
-          periodSeconds: 10
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /
             port: 5000
-          initialDelaySeconds: 10
+          initialDelaySeconds: 15
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mail-app
   namespace: mail-system
+  labels:
+    app: mail-app
 spec:
   selector:
     app: mail-app
   ports:
   - port: 80
     targetPort: 5000
+    name: http
   type: ClusterIP
 ---
 apiVersion: networking.k8s.io/v1

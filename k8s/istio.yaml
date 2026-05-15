@@ -13,7 +13,6 @@ spec:
       protocol: HTTP
     hosts:
     - "mail.local"
-    - "*.mail.local"
 ---
 apiVersion: networking.istio.io/v1alpha3
 kind: VirtualService
@@ -28,16 +27,31 @@ spec:
   http:
   - match:
     - uri:
+        prefix: /socket.io
+    route:
+    - destination:
+        host: mail-app
+        port:
+          number: 80
+    timeout: 30s
+  - match:
+    - uri:
         prefix: /
     route:
     - destination:
         host: mail-app
         port:
           number: 80
+      weight: 100
     timeout: 10s
     retries:
       attempts: 3
       perTryTimeout: 3s
+    fault:
+      abort:
+        percentage:
+          value: 0
+        httpStatus: 503
 ---
 apiVersion: networking.istio.io/v1alpha3
 kind: DestinationRule
@@ -46,6 +60,10 @@ metadata:
   namespace: mail-system
 spec:
   host: mail-app
+  subsets:
+  - name: v1
+    labels:
+      version: v1
   trafficPolicy:
     loadBalancer:
       simple: ROUND_ROBIN
@@ -53,7 +71,6 @@ spec:
       tcp:
         maxConnections: 100
       http:
-        h2UpgradePolicy: DEFAULT
         http1MaxPendingRequests: 100
         http2MaxRequests: 1000
     outlierDetection:
@@ -76,22 +93,51 @@ spec:
       tcp:
         maxConnections: 50
 ---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: rabbitmq-dr
+  namespace: mail-system
+spec:
+  host: rabbitmq
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 50
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: acceptor-dr
+  namespace: mail-system
+spec:
+  host: mail-acceptor-1
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 20
+  subsets:
+  - name: v1
+    labels:
+      app: mail-acceptor-1
+---
 apiVersion: security.istio.io/v1beta1
 kind: PeerAuthentication
 metadata:
-  name: mail-mpa
+  name: mail-mesh-mtls
   namespace: mail-system
 spec:
-  selector:
-    matchLabels:
-      app: mail-app
   mtls:
-    mode: STRICT
+    mode: PERMISSIVE
 ---
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
-  name: mail-ap
+  name: mail-app-ap
   namespace: mail-system
 spec:
   selector:
@@ -102,3 +148,64 @@ spec:
   - from:
     - source:
         principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+  - from:
+    - source:
+        namespaces: ["mail-system"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: mail-acceptor-ap
+  namespace: mail-system
+spec:
+  selector:
+    matchLabels:
+      app: mail-acceptor-1
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["mail-system"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: acceptor-2-ap
+  namespace: mail-system
+spec:
+  selector:
+    matchLabels:
+      app: mail-acceptor-2
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["mail-system"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: acceptor-3-ap
+  namespace: mail-system
+spec:
+  selector:
+    matchLabels:
+      app: mail-acceptor-3
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["mail-system"]
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: mail-telemetry
+  namespace: mail-system
+spec:
+  selector:
+    matchLabels:
+      app: mail-app
+  accessLogging:
+  - providers:
+    - name: envoy

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: mail-system
+data:
+  FLASK_ENV: "production"
+  USE_SQLITE: "false"
+  DB_NAME: "mail_system"
+  DB_PORT: "3306"
+  RABBITMQ_PORT: "5672"
+  PAXOS_ACCEPTOR_COUNT: "3"
+  PAXOS_TIMEOUT_MS: "5000"
+  PAXOS_RETRY_COUNT: "3"
+  AGENT_MIN_COUNT: "2"
+  ACCEPTOR_1_URL: "http://mail-acceptor-1:8503"
+  ACCEPTOR_2_URL: "http://mail-acceptor-2:8504"
+  ACCEPTOR_3_URL: "http://mail-acceptor-3:8505"
+  CATEGORIES: '["会议通知","垃圾邮件","工作汇报","可疑邮件"]'

@@ -21,13 +21,24 @@ services:
       retries: 5
 
   rabbitmq:
-    image: rabbitmq:management
+    image: rabbitmq:3.12-management
     container_name: mail-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
     ports:
       - "5672:5672"
       - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
     networks:
       - mail-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   app:
     build:
@@ -38,8 +49,9 @@ services:
       mysql:
         condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
     environment:
+      USE_SQLITE: "false"
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: root
@@ -47,6 +59,8 @@ services:
       DB_NAME: mail_system
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
       FLASK_ENV: development
       ACCEPTOR_1_URL: http://acceptor-1:8503
       ACCEPTOR_2_URL: http://acceptor-2:8504
@@ -98,6 +112,7 @@ services:
 
 volumes:
   mysql-data:
+  rabbitmq-data:
 
 networks:
   mail-network:

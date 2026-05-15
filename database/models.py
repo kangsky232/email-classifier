@@ -1,5 +1,6 @@
 import json
 import os
+import hashlib
 
 from database.db import db
 
@@ -7,11 +8,35 @@ from database.db import db
 USE_SQLITE = os.getenv("USE_SQLITE", "true").lower() == "true"
 
 
+class User:
+    @staticmethod
+    def _hash_password(password):
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    @staticmethod
+    def create(username, password):
+        sql = "INSERT INTO users (username, password) VALUES (%s, %s)"
+        cursor = db.execute(sql, (username, User._hash_password(password)))
+        last_id = cursor.lastrowid
+        cursor.close()
+        return last_id
+
+    @staticmethod
+    def authenticate(username, password):
+        sql = "SELECT * FROM users WHERE username = %s AND password = %s"
+        return db.fetch_one(sql, (username, User._hash_password(password)))
+
+    @staticmethod
+    def get_by_id(user_id):
+        sql = "SELECT id, username, created_at FROM users WHERE id = %s"
+        return db.fetch_one(sql, (user_id,))
+
+
 class Email:
     @staticmethod
-    def create(sender, subject, content):
-        sql = "INSERT INTO emails (sender, subject, content) VALUES (%s, %s, %s)"
-        cursor = db.execute(sql, (sender, subject, content))
+    def create(sender, subject, content, user_id=None):
+        sql = "INSERT INTO emails (sender, subject, content, user_id) VALUES (%s, %s, %s, %s)"
+        cursor = db.execute(sql, (sender, subject, content, user_id))
         last_id = cursor.lastrowid
         cursor.close()
         return last_id
@@ -22,7 +47,7 @@ class Email:
         return db.fetch_one(sql, (email_id,))
 
     @staticmethod
-    def get_list(page=1, limit=10, search=None, category=None):
+    def get_list(page=1, limit=10, search=None, category=None, user_id=None):
         page = max(int(page or 1), 1)
         limit = max(int(limit or 10), 1)
         offset = (page - 1) * limit
@@ -40,6 +65,11 @@ class Email:
             WHERE 1=1
         """
         params = []
+
+        if user_id:
+            base_sql += " AND e.user_id = %s"
+            count_sql += " AND e.user_id = %s"
+            params.append(user_id)
 
         if search:
             base_sql += " AND (e.sender LIKE %s OR e.subject LIKE %s OR e.content LIKE %s)"

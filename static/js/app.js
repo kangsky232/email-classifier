@@ -33,6 +33,7 @@ const App = {
         monitor: () => MonitorPage.load(),
         paxos: () => PaxosPage.load(),
         stats: () => StatsPage.load(),
+        queue: () => QueuePage.load(),
         settings: () => SettingsPage.load()
     },
 
@@ -150,4 +151,7 @@ const App = {
     }
 };
 
-window.addEventListener("DOMContentLoaded", () => App.init());
+window.addEventListener("DOMContentLoaded", () => {
+    App.init();
+    AuthPage.init();
+});

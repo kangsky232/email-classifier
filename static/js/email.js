@@ -34,6 +34,13 @@ const EmailPage = {
                     <button class="btn btn-sm btn-danger" type="button" onclick="EmailPage.batchDelete()">Batch delete</button>
                     <button class="btn btn-sm" type="button" onclick="EmailPage.clearSelection()">Clear</button>
                 </div>
+                <div style="display:flex;gap:8px;margin-bottom:8px">
+                    <button class="btn btn-sm btn-success" type="button" onclick="EmailPage.exportCSV()">Export CSV</button>
+                    <label class="btn btn-sm" style="cursor:pointer;margin:0">
+                        Import CSV
+                        <input type="file" accept=".csv" style="display:none" onchange="EmailPage.importCSV(this.files[0])">
+                    </label>
+                </div>
                 <div id="email-list"></div>
             </div>
         `;
@@ -321,6 +328,32 @@ const EmailPage = {
             await API.delete(`/api/emails/${id}`);
             this.selected.delete(id);
             App.showToast("Email deleted");
+            this.fetchList();
+        } catch (error) {
+            App.showToast(error.message, "error");
+        }
+    },
+
+    exportCSV() {
+        window.open("/api/emails/export", "_blank");
+    },
+
+    async importCSV(file) {
+        if (!file) return;
+        if (!file.name.endsWith(".csv")) {
+            App.showToast("Please select a CSV file", "warning");
+            return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        try {
+            const response = await fetch("/api/emails/import", { method: "POST", body: formData });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Import failed");
+            App.showToast(`Imported ${result.imported} email(s)`);
+            if (result.errors && result.errors.length) {
+                console.warn("Import errors:", result.errors);
+            }
             this.fetchList();
         } catch (error) {
             App.showToast(error.message, "error");
