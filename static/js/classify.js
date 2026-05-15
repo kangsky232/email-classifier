@@ -7,7 +7,7 @@ const ClassifyPage = {
             <div class="page-header">
                 <div>
                     <h2>Classify Center</h2>
-                    <p class="page-subtitle">Submit email content, or generate from keywords. Switch between fixed categories and AI free classification.</p>
+                    <p class="page-subtitle">Submit email content. AI will automatically classify and extract keywords.</p>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
                     <span style="font-size:12px;color:#888;">Mode:</span>
@@ -18,13 +18,8 @@ const ClassifyPage = {
             <div class="grid two">
                 <div class="card">
                     <h3 class="card-title">Input</h3>
-                    <div id="keyword-section" style="margin-bottom:12px;padding:10px;background:#f8fafc;border-radius:6px;border:1px dashed #cbd5e1;">
-                        <label style="font-size:12px;color:#666;display:block;margin-bottom:4px;">Generate email from keywords (requires LLM API Key)</label>
-                        <div style="display:flex;gap:8px;">
-                            <input id="gen-keywords" style="flex:1;padding:6px 10px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;" placeholder="e.g. boss, meeting, urgent, tomorrow afternoon">
-                            <button id="gen-btn" class="btn btn-sm" type="button" onclick="ClassifyPage.generate()" style="white-space:nowrap;">Generate</button>
-                        </div>
-                        <div id="gen-status" style="font-size:11px;color:#888;margin-top:4px;"></div>
+                    <div id="keyword-section" style="margin-bottom:12px;padding:10px;background:#f0fdf4;border-radius:6px;border:1px dashed #86efac;">
+                        <span style="font-size:12px;color:#166534;">💡 After classification, AI will automatically extract keywords from your email content.</span>
                     </div>
                     <div class="form-grid">
                         <div class="form-group"><label>Sender</label><input id="classify-sender" value="boss@company.com"></div>
@@ -56,8 +51,6 @@ const ClassifyPage = {
         document.getElementById("classify-sender").value = "";
         document.getElementById("classify-subject").value = "";
         document.getElementById("classify-content").value = "";
-        document.getElementById("gen-keywords").value = "";
-        document.getElementById("gen-status").textContent = "";
         document.getElementById("classify-result").innerHTML = `
             <h3 class="card-title">Result</h3>
             <div class="empty-state">Submit an email to see final category, agent votes, and Paxos logs.</div>
@@ -161,6 +154,12 @@ const ClassifyPage = {
                     const color = this.categoryColor(category, index);
                     const reason = (agent.details && agent.details.reason) ? agent.details.reason : "";
                     const source = (agent.details && agent.details.source) ? agent.details.source : "";
+                    const keywords = agent.keywords || (agent.details && agent.details.keywords) || [];
+                    const kwTags = keywords.length ? `
+                        <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;">
+                            <span style="font-size:10px;color:#7c3aed;">🏷 AI keywords:</span>
+                            ${keywords.map(k => `<span style="background:#ede9fe;color:#7c3aed;padding:1px 6px;border-radius:4px;font-size:10px;">${App.escape(k)}</span>`).join("")}
+                        </div>` : "";
                     return `
                         <div class="card agent-card agent-result-card" style="box-shadow:none">
                             <div class="agent-head">
@@ -178,6 +177,7 @@ const ClassifyPage = {
                                     <div class="confidence-fill-visual" style="width:${safeConfidence * 100}%; background:${color};"></div>
                                 </div>
                                 ${reason ? `<div class="confidence-note" style="font-size:11px;color:#666;margin-top:4px;">${App.escape(reason)}</div>` : ""}
+                                ${kwTags}
                             </div>
                             ${agent.error ? `<div class="error-state" style="padding:0;text-align:left">${App.escape(agent.error)}</div>` : ""}
                         </div>

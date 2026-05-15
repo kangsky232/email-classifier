@@ -18,7 +18,7 @@ ROLE_PROMPTS = {
 分类选项：可疑邮件、垃圾邮件、会议通知、工作汇报
 
 返回 JSON 格式（不要其他内容）：
-{"category": "分类结果", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+{"category": "分类结果", "confidence": 0.0-1.0, "reason": "分析推理过程", "keywords": ["关键词1", "关键词2", "关键词3"]}"""
     },
     "business": {
         "name": "商务助理",
@@ -34,7 +34,7 @@ ROLE_PROMPTS = {
 分类选项：会议通知、工作汇报、垃圾邮件、可疑邮件
 
 返回 JSON 格式（不要其他内容）：
-{"category": "分类结果", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+{"category": "分类结果", "confidence": 0.0-1.0, "reason": "分析推理过程", "keywords": ["关键词1", "关键词2", "关键词3"]}"""
     },
     "general": {
         "name": "通用分类",
@@ -50,7 +50,7 @@ ROLE_PROMPTS = {
 分类选项：会议通知、垃圾邮件、工作汇报、可疑邮件
 
 返回 JSON 格式（不要其他内容）：
-{"category": "分类结果", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+{"category": "分类结果", "confidence": 0.0-1.0, "reason": "分析推理过程", "keywords": ["关键词1", "关键词2", "关键词3"]}"""
     }
 }
 
@@ -69,7 +69,7 @@ FREE_PROMPTS = {
 不要局限于固定类别列表，用最能描述邮件性质的词语作为 category。
 
 返回 JSON 格式（不要其他内容）：
-{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程", "keywords": ["关键词1", "关键词2", "关键词3"]}"""
     },
     "business": {
         "name": "商务助理(自由)",
@@ -85,7 +85,7 @@ FREE_PROMPTS = {
 不要局限于固定类别列表，用最能描述邮件性质的词语作为 category。
 
 返回 JSON 格式（不要其他内容）：
-{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程", "keywords": ["关键词1", "关键词2", "关键词3"]}"""
     },
     "general": {
         "name": "通用分类(自由)",
@@ -99,7 +99,7 @@ FREE_PROMPTS = {
 不要局限于固定类别列表，用最能准确描述邮件性质的词语作为 category。
 
 返回 JSON 格式（不要其他内容）：
-{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程", "keywords": ["关键词1", "关键词2", "关键词3"]}"""
     }
 }
 
@@ -152,6 +152,11 @@ OPENAI_COMPATIBLE_API = {
 }
 
 BUILTIN_PROVIDERS = {
+    "ollama": {
+        "name": "Ollama(本地)", "base_url": "http://localhost:11434",
+        "model": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
+        "env_key": None, "protocol": "ollama", "no_auth": True
+    },
     "deepseek": {
         "name": "DeepSeek", "base_url": "https://api.deepseek.com",
         "model": "deepseek-chat", "env_key": "DEEPSEEK_API_KEY",
@@ -192,7 +197,20 @@ CUSTOM_LLM_NAME = os.getenv("CUSTOM_LLM_NAME", "自定义模型")
 
 def _load_providers_from_env():
     providers = {}
+    # Ollama: auto-detect locally, no API key needed
+    try:
+        resp = requests.get("http://localhost:11434/api/tags", timeout=3)
+        if resp.status_code == 200:
+            providers["ollama"] = {
+                **BUILTIN_PROVIDERS["ollama"],
+                "api_key": "ollama"
+            }
+    except Exception:
+        pass
+
     for pid, cfg in BUILTIN_PROVIDERS.items():
+        if pid == "ollama" or cfg.get("env_key") is None:
+            continue
         key = os.getenv(cfg["env_key"], "")
         if key:
             providers[pid] = {**cfg, "api_key": key}
@@ -245,6 +263,8 @@ class LLMAgent(BaseAgent):
 
             if protocol == "ernie":
                 result = self._call_ernie_with_prompt(provider, free_prompt, user_msg)
+            elif protocol == "ollama":
+                result = self._call_ollama_with_prompt(provider, free_prompt, user_msg)
             else:
                 result = self._call_openai_with_prompt(provider, free_prompt, user_msg)
 
@@ -259,7 +279,10 @@ class LLMAgent(BaseAgent):
 
     def _call_openai_with_prompt(self, provider, system_prompt, user_msg):
         url = f"{provider['base_url'].rstrip('/')}{OPENAI_COMPATIBLE_API['path']}"
-        headers = OPENAI_COMPATIBLE_API["headers"](provider["api_key"])
+        if provider.get("no_auth"):
+            headers = {"Content-Type": "application/json"}
+        else:
+            headers = OPENAI_COMPATIBLE_API["headers"](provider["api_key"])
         payload = {
             "model": provider["model"],
             "messages": [
@@ -276,6 +299,30 @@ class LLMAgent(BaseAgent):
                 return self._parse_free_response(reply)
         except Exception as e:
             print(f"  [{provider['name']}] 自由分类请求失败: {e}")
+        return None
+
+    def _call_ollama_with_prompt(self, provider, system_prompt, user_msg):
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            "stream": False,
+            "options": {"temperature": 0.3}
+        }
+        try:
+            resp = requests.post(
+                f"{provider['base_url']}/api/chat",
+                json=payload, timeout=60
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data.get("message", {}).get("content", "")
+                if reply:
+                    return self._parse_free_response(reply)
+        except Exception as e:
+            print(f"  [Ollama] 自由分类请求失败: {e}")
         return None
 
     def _call_ernie_with_prompt(self, provider, system_prompt, user_msg):
@@ -319,10 +366,14 @@ class LLMAgent(BaseAgent):
                 category = result.get("category", "未分类")
                 confidence = float(result.get("confidence", 0.7))
                 reason = result.get("reason", "")
+                keywords = result.get("keywords", [])
+                if isinstance(keywords, str):
+                    keywords = [k.strip() for k in keywords.split(",") if k.strip()]
                 return {
                     "category": category.strip(),
                     "confidence": round(min(max(confidence, 0.1), 0.99), 2),
                     "reason": reason,
+                    "keywords": keywords[:10] if isinstance(keywords, list) else [],
                     "source": "llm_free"
                 }
         except (json.JSONDecodeError, KeyError, ValueError):
@@ -368,6 +419,26 @@ class LLMAgent(BaseAgent):
                     if resp.status_code == 200:
                         data = resp.json()
                         reply = data.get("result", "")
+                        return LLMAgent._parse_gen_response(reply)
+                except Exception:
+                    continue
+            elif protocol == "ollama":
+                body = {
+                    "model": p["model"],
+                    "messages": [
+                        {"role": "user", "content": GEN_EMAIL_PROMPT + "\n" + user_msg}
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0.7}
+                }
+                try:
+                    resp = requests.post(
+                        f"{p['base_url']}/api/chat",
+                        json=body, timeout=60
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        reply = data.get("message", {}).get("content", "")
                         return LLMAgent._parse_gen_response(reply)
                 except Exception:
                     continue
@@ -452,12 +523,17 @@ class LLMAgent(BaseAgent):
         protocol = provider.get("protocol", "openai_compatible")
         if protocol == "ernie":
             return self._call_ernie(provider, sender, subject, content)
+        if protocol == "ollama":
+            return self._call_ollama(provider, sender, subject, content)
         return self._call_openai_compatible(provider, sender, subject, content)
 
     def _call_openai_compatible(self, provider, sender, subject, content):
         user_msg = f"发件人: {sender}\n主题: {subject}\n内容: {content}"
         url = f"{provider['base_url'].rstrip('/')}{OPENAI_COMPATIBLE_API['path']}"
-        headers = OPENAI_COMPATIBLE_API["headers"](provider["api_key"])
+        if provider.get("no_auth"):
+            headers = {"Content-Type": "application/json"}
+        else:
+            headers = OPENAI_COMPATIBLE_API["headers"](provider["api_key"])
         payload = {
             "model": provider["model"],
             "messages": [
@@ -513,6 +589,33 @@ class LLMAgent(BaseAgent):
             print(f"  [文心一言] 请求失败: {e}")
         return None
 
+    def _call_ollama(self, provider, sender, subject, content):
+        user_msg = f"发件人: {sender}\n主题: {subject}\n内容: {content}"
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            "stream": False,
+            "options": {"temperature": 0.1}
+        }
+        try:
+            resp = requests.post(
+                f"{provider['base_url']}/api/chat",
+                json=payload, timeout=60
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data.get("message", {}).get("content", "")
+                if reply:
+                    return self._parse_response(reply, provider["name"])
+            else:
+                print(f"  [Ollama] HTTP {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"  [Ollama] 请求失败: {e}")
+        return None
+
     def _parse_response(self, reply, provider_name):
         try:
             json_start = reply.find('{')
@@ -522,12 +625,16 @@ class LLMAgent(BaseAgent):
                 category = result.get("category", "未分类")
                 confidence = float(result.get("confidence", 0.8))
                 reason = result.get("reason", "")
+                keywords = result.get("keywords", [])
+                if isinstance(keywords, str):
+                    keywords = [k.strip() for k in keywords.split(",") if k.strip()]
                 if category not in self.categories:
                     category = self._match_category(category)
                 return {
                     "category": category,
                     "confidence": round(min(max(confidence, 0.1), 0.99), 2),
                     "reason": reason,
+                    "keywords": keywords[:10] if isinstance(keywords, list) else [],
                     "source": provider_name
                 }
         except (json.JSONDecodeError, KeyError, ValueError):
@@ -550,12 +657,19 @@ class LLMAgent(BaseAgent):
 
         best = max(scores, key=scores.get)
 
+        # 提取关键词：从所有规则关键词中匹配
+        all_rules_keywords = set()
+        for kws in self._fallback_rules.values():
+            all_rules_keywords.update(kws)
+        matched_keywords = [kw for kw in all_rules_keywords if kw.lower() in text.lower()]
+
         if scores[best] > 0:
             confidence = min(0.5 + scores[best] * 0.08, 0.88)
             return {
                 "category": best,
                 "confidence": round(confidence, 2),
                 "reason": f"降级模式-关键词匹配({scores[best]}个)",
+                "keywords": matched_keywords[:10],
                 "source": "fallback"
             }
 
@@ -564,12 +678,12 @@ class LLMAgent(BaseAgent):
         has_urgency = any(w in text for w in ["赶紧", "立即", "马上", "尽快", "紧急", "务必"])
 
         if has_url or has_urgency:
-            return {"category": "可疑邮件", "confidence": 0.41, "reason": "降级模式-启发式(含链接或紧迫词)", "source": "fallback_heuristic"}
+            return {"category": "可疑邮件", "confidence": 0.41, "reason": "降级模式-启发式(含链接或紧迫词)", "keywords": matched_keywords[:10], "source": "fallback_heuristic"}
 
         if any(w in text for w in ["你好", "您好", "请", "谢谢", "麻烦"]):
-            return {"category": "工作汇报", "confidence": 0.38, "reason": "降级模式-启发式(礼貌用语)", "source": "fallback_heuristic"}
+            return {"category": "工作汇报", "confidence": 0.38, "reason": "降级模式-启发式(礼貌用语)", "keywords": matched_keywords[:10], "source": "fallback_heuristic"}
 
-        return {"category": "会议通知", "confidence": 0.35, "reason": "降级模式-无特征匹配的默认判断", "source": "fallback_default"}
+        return {"category": "会议通知", "confidence": 0.35, "reason": "降级模式-无特征匹配的默认判断", "keywords": matched_keywords[:10], "source": "fallback_default"}
 
     def get_status(self):
         return {

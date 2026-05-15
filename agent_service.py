@@ -246,4 +246,4 @@ if __name__ == '__main__':
     print(f"  LLM:    {'已配置(' + str(len(agent._providers)) + '个Provider)' if agent._providers else '降级模式(关键词)'}")
     print(f"========================================")
 
-    app.run(debug=False, host=args.host, port=args.port)
+    app.run(host=args.host, port=args.port, debug=False)

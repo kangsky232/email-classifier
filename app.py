@@ -313,6 +313,7 @@ def classify_email_free():
                             "method": f"llm_{node.role}_free",
                             "category": r.get("category", "未分类"),
                             "confidence": r.get("confidence", 0.5),
+                            "keywords": r.get("keywords", []),
                             "details": {
                                 "reason": r.get("reason", ""),
                                 "source": r.get("source", "llm_free"),
@@ -475,7 +476,17 @@ def refresh_remote_agents():
             "status": agent.status,
             "online": online
         })
-    return jsonify({"success": True, "agents": results})
+    # Also refresh acceptor nodes
+    node_results = []
+    for node in classifier.acceptor_nodes:
+        online = node.check_health()
+        node_results.append({
+            "url": node.url,
+            "name": node.name,
+            "status": node.status,
+            "online": online
+        })
+    return jsonify({"success": True, "agents": results, "nodes": node_results})
 
 @app.route('/api/paxos/logs', methods=['GET'])
 def get_paxos_logs():
