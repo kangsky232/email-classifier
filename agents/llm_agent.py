@@ -85,15 +85,70 @@ FALLBACK_RULES = {
     }
 }
 
+OPENAI_COMPATIBLE_API = {
+    "path": "/v1/chat/completions",
+    "headers": lambda key: {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    "parse": lambda resp: resp.json()["choices"][0]["message"]["content"].strip()
+}
+
+BUILTIN_PROVIDERS = {
+    "deepseek": {
+        "name": "DeepSeek", "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat", "env_key": "DEEPSEEK_API_KEY",
+        "protocol": "openai_compatible"
+    },
+    "qwen": {
+        "name": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode",
+        "model": "qwen-turbo", "env_key": "DASHSCOPE_API_KEY",
+        "protocol": "openai_compatible"
+    },
+    "openai": {
+        "name": "ChatGPT", "base_url": "https://api.openai.com",
+        "model": "gpt-3.5-turbo", "env_key": "OPENAI_API_KEY",
+        "protocol": "openai_compatible"
+    },
+    "ernie": {
+        "name": "文心一言", "base_url": "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro",
+        "model": "ERNIE-Speed-128K", "env_key": "ERNIE_API_KEY",
+        "extra_env": "ERNIE_SECRET_KEY", "protocol": "ernie"
+    },
+    "spark": {
+        "name": "讯飞星火", "base_url": "https://spark-api-open.xf-yun.com/v1",
+        "model": "generalv3.5", "env_key": "SPARK_API_KEY",
+        "protocol": "openai_compatible"
+    },
+    "glm": {
+        "name": "ChatGLM", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4-flash", "env_key": "ZHIPU_API_KEY",
+        "protocol": "openai_compatible"
+    }
+}
+
+CUSTOM_LLM_URL = os.getenv("CUSTOM_LLM_URL", "")
+CUSTOM_LLM_KEY = os.getenv("CUSTOM_LLM_KEY", "")
+CUSTOM_LLM_MODEL = os.getenv("CUSTOM_LLM_MODEL", "default-model")
+CUSTOM_LLM_NAME = os.getenv("CUSTOM_LLM_NAME", "自定义模型")
+
+
+def _load_providers_from_env():
+    providers = {}
+    for pid, cfg in BUILTIN_PROVIDERS.items():
+        key = os.getenv(cfg["env_key"], "")
+        if key:
+            providers[pid] = {**cfg, "api_key": key}
+
+    if CUSTOM_LLM_URL and CUSTOM_LLM_KEY:
+        providers["custom"] = {
+            "name": CUSTOM_LLM_NAME,
+            "base_url": CUSTOM_LLM_URL.rstrip("/"),
+            "model": CUSTOM_LLM_MODEL,
+            "api_key": CUSTOM_LLM_KEY,
+            "protocol": "openai_compatible"
+        }
+    return providers
+
 
 class LLMAgent(BaseAgent):
-    PROVIDER = {
-        "name": "DeepSeek",
-        "url": "https://api.deepseek.com/v1/chat/completions",
-        "model": "deepseek-chat",
-        "env_key": "DEEPSEEK_API_KEY"
-    }
-
     def __init__(self, role="general"):
         role_config = ROLE_PROMPTS.get(role, ROLE_PROMPTS["general"])
         name = role_config["name"]
@@ -104,14 +159,38 @@ class LLMAgent(BaseAgent):
         super().__init__(name, f"llm_{role}")
 
         self.categories = ["会议通知", "垃圾邮件", "工作汇报", "可疑邮件"]
-        self.api_key = None
         self._fallback_rules = FALLBACK_RULES.get(role, FALLBACK_RULES["general"])
-        self._init_provider()
+        self._providers = []
+        self._refresh_providers()
 
-    def _init_provider(self):
-        self.api_key = os.getenv(self.PROVIDER["env_key"], "")
-        if self.api_key:
-            print(f"  [LLM] DeepSeek API Key 已配置")
+    def _refresh_providers(self):
+        self._providers = list(_load_providers_from_env().values())
+
+    @staticmethod
+    def get_all_providers():
+        configs = _load_providers_from_env()
+        result = {}
+        for pid, cfg in BUILTIN_PROVIDERS.items():
+            has_key = bool(os.getenv(cfg["env_key"], ""))
+            key = os.getenv(cfg["env_key"], "")
+            preview = ""
+            if key and len(key) > 10:
+                preview = f"{key[:6]}...{key[-4:]}"
+            elif key:
+                preview = "***"
+            result[pid] = {
+                "name": cfg["name"], "model": cfg["model"],
+                "base_url": cfg["base_url"], "active": has_key,
+                "key_preview": preview
+            }
+        result["custom"] = {
+            "name": CUSTOM_LLM_NAME if CUSTOM_LLM_KEY else "自定义模型(未配置)",
+            "model": CUSTOM_LLM_MODEL,
+            "base_url": CUSTOM_LLM_URL or "未设置",
+            "active": bool(CUSTOM_LLM_KEY),
+            "key_preview": ""
+        }
+        return result
 
     def classify(self, sender, subject, content):
         result, elapsed = self._measure_time(self._do_classify, sender, subject, content)
@@ -123,20 +202,24 @@ class LLMAgent(BaseAgent):
         return result
 
     def _do_classify(self, sender, subject, content):
-        if self.api_key:
-            result = self._call_deepseek(sender, subject, content)
+        for provider in self._providers:
+            result = self._call_provider(provider, sender, subject, content)
             if result:
                 return result
         return self._fallback_classify(sender, subject, content)
 
-    def _call_deepseek(self, sender, subject, content):
+    def _call_provider(self, provider, sender, subject, content):
+        protocol = provider.get("protocol", "openai_compatible")
+        if protocol == "ernie":
+            return self._call_ernie(provider, sender, subject, content)
+        return self._call_openai_compatible(provider, sender, subject, content)
+
+    def _call_openai_compatible(self, provider, sender, subject, content):
         user_msg = f"发件人: {sender}\n主题: {subject}\n内容: {content}"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        url = f"{provider['base_url'].rstrip('/')}{OPENAI_COMPATIBLE_API['path']}"
+        headers = OPENAI_COMPATIBLE_API["headers"](provider["api_key"])
         payload = {
-            "model": self.PROVIDER["model"],
+            "model": provider["model"],
             "messages": [
                 {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": user_msg}
@@ -145,18 +228,52 @@ class LLMAgent(BaseAgent):
             "max_tokens": 300
         }
         try:
-            resp = requests.post(self.PROVIDER["url"], headers=headers, json=payload, timeout=30)
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 200:
-                data = resp.json()
-                reply = data["choices"][0]["message"]["content"].strip()
-                return self._parse_response(reply)
+                reply = OPENAI_COMPATIBLE_API["parse"](resp)
+                return self._parse_response(reply, provider["name"])
             else:
-                print(f"  [DeepSeek] HTTP {resp.status_code}: {resp.text[:200]}")
+                print(f"  [{provider['name']}] HTTP {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
-            print(f"  [DeepSeek] 请求失败: {e}")
+            print(f"  [{provider['name']}] 请求失败: {e}")
         return None
 
-    def _parse_response(self, reply):
+    def _call_ernie(self, provider, sender, subject, content):
+        user_msg = f"发件人: {sender}\n主题: {subject}\n内容: {content}"
+        ernie_secret = os.getenv("ERNIE_SECRET_KEY", "")
+        if not ernie_secret:
+            return None
+        token_url = f"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id={provider['api_key']}&client_secret={ernie_secret}"
+        try:
+            token_resp = requests.get(token_url, timeout=10)
+            if token_resp.status_code != 200:
+                return None
+            access_token = token_resp.json().get("access_token", "")
+            if not access_token:
+                return None
+        except Exception:
+            return None
+
+        url = f"{provider['base_url']}?access_token={access_token}"
+        payload = {
+            "messages": [
+                {"role": "system", "content": self._system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            "temperature": 0.1,
+        }
+        headers = {"Content-Type": "application/json"}
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data.get("result", "")
+                return self._parse_response(reply, provider["name"])
+        except Exception as e:
+            print(f"  [文心一言] 请求失败: {e}")
+        return None
+
+    def _parse_response(self, reply, provider_name):
         try:
             json_start = reply.find('{')
             json_end = reply.rfind('}') + 1
@@ -171,7 +288,7 @@ class LLMAgent(BaseAgent):
                     "category": category,
                     "confidence": round(min(max(confidence, 0.1), 0.99), 2),
                     "reason": reason,
-                    "source": "deepseek_api"
+                    "source": provider_name
                 }
         except (json.JSONDecodeError, KeyError, ValueError):
             pass
@@ -202,7 +319,6 @@ class LLMAgent(BaseAgent):
                 "source": "fallback"
             }
 
-        # 完全无匹配时的启发式判断
         url_patterns = ["http://", "https://", "www.", ".com", ".cn", ".net"]
         has_url = any(p in text for p in url_patterns)
         has_urgency = any(w in text for w in ["赶紧", "立即", "马上", "尽快", "紧急", "务必"])
@@ -220,6 +336,7 @@ class LLMAgent(BaseAgent):
             "name": self.name,
             "role": self.role,
             "description": self.role_description,
-            "available": bool(self.api_key),
-            "provider": "deepseek"
+            "available": len(self._providers) > 0,
+            "active_providers": [p["name"] for p in self._providers],
+            "provider_count": len(self._providers)
         }

@@ -4,6 +4,7 @@ from flask_socketio import SocketIO, emit
 from config import Config
 from database.models import Email, Classification, PaxosLog, FinalResult, SystemConfig, User
 from agents.classifier import classifier
+from agents.llm_agent import LLMAgent
 from mq.producer import producer
 from mq.consumer import consumer
 import threading
@@ -448,31 +449,60 @@ def get_llm_status():
             "health": health
         })
 
+    providers = LLMAgent.get_all_providers()
+    active_count = sum(1 for p in providers.values() if p["active"])
+
     any_available = any(n["status"] == "online" for n in node_statuses)
     return jsonify({
-        "available": any_available,
+        "available": any_available or active_count > 0,
         "total_nodes": len(node_statuses),
         "online_nodes": sum(1 for n in node_statuses if n["status"] == "online"),
-        "nodes": node_statuses
+        "nodes": node_statuses,
+        "providers": providers,
+        "active_providers": active_count,
+        "total_providers": len(providers)
     })
 
 @app.route('/api/llm/config', methods=['POST'])
 def configure_llm():
     data = request.get_json()
-    api_key = data.get('api_key', '')
+    provider = data.get('provider', 'deepseek')
+    api_key = data.get('api_key', '').strip()
+    url = data.get('url', '').strip()
+    model = data.get('model', '').strip()
+    name = data.get('name', '').strip()
 
     if not api_key:
         return jsonify({"success": False, "error": "API Key 不能为空"}), 400
 
     import os
-    os.environ['DEEPSEEK_API_KEY'] = api_key
+
+    if provider == "custom":
+        if not url:
+            return jsonify({"success": False, "error": "自定义模型需要填写 URL"}), 400
+        os.environ['CUSTOM_LLM_KEY'] = api_key
+        os.environ['CUSTOM_LLM_URL'] = url
+        os.environ['CUSTOM_LLM_MODEL'] = model or "default-model"
+        os.environ['CUSTOM_LLM_NAME'] = name or "自定义模型"
+    else:
+        key_mapping = {
+            'deepseek': 'DEEPSEEK_API_KEY',
+            'qwen': 'DASHSCOPE_API_KEY',
+            'openai': 'OPENAI_API_KEY',
+            'ernie': 'ERNIE_API_KEY',
+            'spark': 'SPARK_API_KEY',
+            'glm': 'ZHIPU_API_KEY'
+        }
+        env_key = key_mapping.get(provider)
+        if env_key:
+            os.environ[env_key] = api_key
 
     results = []
     for node in classifier.acceptor_nodes:
         try:
             resp = requests.post(
                 f"{node.url}/config",
-                json={"api_key": api_key},
+                json={"api_key": api_key, "provider": provider, "url": url, "model": model},
                 timeout=5
             )
             results.append({
@@ -484,15 +514,9 @@ def configure_llm():
             results.append({"node": node.name, "success": False, "message": str(e)[:80]})
 
     success_count = sum(1 for r in results if r["success"])
-    if success_count == 0:
-        return jsonify({
-            "success": True,
-            "message": "API Key 已保存（节点未运行，下次启动节点后请重新设置）",
-            "results": results
-        })
     return jsonify({
         "success": True,
-        "message": f"已同步到 {success_count}/{len(results)} 个节点",
+        "message": f"已同步到 {success_count}/{len(results)} 个节点（重启 agent_service 后生效）",
         "results": results
     })
 
