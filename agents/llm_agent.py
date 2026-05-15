@@ -54,6 +54,66 @@ ROLE_PROMPTS = {
     }
 }
 
+FREE_PROMPTS = {
+    "security": {
+        "name": "安全专家(自由)",
+        "description": "不限定类别，自主判断邮件安全威胁",
+        "system_prompt": """你是一名资深的网络安全专家。请分析这封邮件，自由判断它属于什么类别。
+
+分析角度：
+1. 是否存在安全威胁（钓鱼、欺诈、恶意链接）
+2. 发件人身份是否可信
+3. 邮件的真实意图是什么
+
+请自主确定一个最合适的分类名称（如：钓鱼攻击、账户安全警告、营销推广、会议邀请、工作安排、个人邮件等），
+不要局限于固定类别列表，用最能描述邮件性质的词语作为 category。
+
+返回 JSON 格式（不要其他内容）：
+{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+    },
+    "business": {
+        "name": "商务助理(自由)",
+        "description": "不限定类别，自主判断邮件商务属性",
+        "system_prompt": """你是一名专业的商务助理。请分析这封邮件，自由判断它属于什么类别。
+
+分析角度：
+1. 邮件的商务目的是什么
+2. 涉及哪些业务场景
+3. 对收件人的影响
+
+请自主确定一个最合适的分类名称（如：客户沟通、项目协调、合同签署、招聘面试、财务报销、公司活动等），
+不要局限于固定类别列表，用最能描述邮件性质的词语作为 category。
+
+返回 JSON 格式（不要其他内容）：
+{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+    },
+    "general": {
+        "name": "通用分类(自由)",
+        "description": "不限定类别，全面自由分析邮件",
+        "system_prompt": """你是一名邮件分类专家。请分析这封邮件，自由判断它的类别和性质。
+
+从发件人、主题、内容、语气、目的等多个维度综合判断，然后给出一个最贴切的分类名称。
+分类名称应该简洁明了（2-6个字），如：会议通知、工作汇报、营销推广、客户咨询、内部公告、
+安全警告、招聘相关、财务审批、技术讨论、团队建设、投诉反馈、垃圾广告、钓鱼诈骗等。
+
+不要局限于固定类别列表，用最能准确描述邮件性质的词语作为 category。
+
+返回 JSON 格式（不要其他内容）：
+{"category": "你确定的类别", "confidence": 0.0-1.0, "reason": "分析推理过程"}"""
+    }
+}
+
+GEN_EMAIL_PROMPT = """你是一个邮件生成助手。根据用户提供的关键词，生成一封逼真的商务邮件。
+
+要求：
+1. 邮件内容自然、真实，符合职场语境
+2. 包含发件人身份暗示、合理的主题和正文
+3. 长度适中（50-200字）
+4. 不要包含任何解释性文字
+
+返回 JSON 格式（不要其他内容）：
+{"sender": "发件人邮箱", "subject": "邮件主题", "content": "邮件正文"}"""
+
 FALLBACK_RULES = {
     "security": {
         "可疑邮件": ["验证", "账户", "密码", "点击", "链接", "异常", "登录", "冻结", "安全",
@@ -165,6 +225,186 @@ class LLMAgent(BaseAgent):
 
     def _refresh_providers(self):
         self._providers = list(_load_providers_from_env().values())
+
+    def _get_free_prompt(self):
+        role_cfg = FREE_PROMPTS.get(self.role, FREE_PROMPTS["general"])
+        return role_cfg["system_prompt"]
+
+    def classify_free(self, sender, subject, content):
+        """自由分类：不限固定类别，LLM 自主确定最合适的分类名"""
+        if not self._providers:
+            # 没有LLM可用，仍然走降级但标注为自由模式
+            fallback = self._fallback_classify(sender, subject, content)
+            fallback["mode"] = "free_fallback"
+            return fallback
+
+        for provider in self._providers:
+            protocol = provider.get("protocol", "openai_compatible")
+            user_msg = f"发件人: {sender}\n主题: {subject}\n内容: {content}"
+            free_prompt = self._get_free_prompt()
+
+            if protocol == "ernie":
+                result = self._call_ernie_with_prompt(provider, free_prompt, user_msg)
+            else:
+                result = self._call_openai_with_prompt(provider, free_prompt, user_msg)
+
+            if result:
+                result["mode"] = "free"
+                result["source"] = provider["name"]
+                return result
+
+        fallback = self._fallback_classify(sender, subject, content)
+        fallback["mode"] = "free_fallback"
+        return fallback
+
+    def _call_openai_with_prompt(self, provider, system_prompt, user_msg):
+        url = f"{provider['base_url'].rstrip('/')}{OPENAI_COMPATIBLE_API['path']}"
+        headers = OPENAI_COMPATIBLE_API["headers"](provider["api_key"])
+        payload = {
+            "model": provider["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 300
+        }
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 200:
+                reply = OPENAI_COMPATIBLE_API["parse"](resp)
+                return self._parse_free_response(reply)
+        except Exception as e:
+            print(f"  [{provider['name']}] 自由分类请求失败: {e}")
+        return None
+
+    def _call_ernie_with_prompt(self, provider, system_prompt, user_msg):
+        ernie_secret = os.getenv("ERNIE_SECRET_KEY", "")
+        if not ernie_secret:
+            return None
+        token_url = f"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id={provider['api_key']}&client_secret={ernie_secret}"
+        try:
+            token_resp = requests.get(token_url, timeout=10)
+            if token_resp.status_code != 200:
+                return None
+            access_token = token_resp.json().get("access_token", "")
+            if not access_token:
+                return None
+        except Exception:
+            return None
+        url = f"{provider['base_url']}?access_token={access_token}"
+        payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            "temperature": 0.3,
+        }
+        try:
+            resp = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data.get("result", "")
+                return self._parse_free_response(reply)
+        except Exception as e:
+            print(f"  [文心一言] 自由分类请求失败: {e}")
+        return None
+
+    def _parse_free_response(self, reply):
+        try:
+            json_start = reply.find('{')
+            json_end = reply.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                result = json.loads(reply[json_start:json_end])
+                category = result.get("category", "未分类")
+                confidence = float(result.get("confidence", 0.7))
+                reason = result.get("reason", "")
+                return {
+                    "category": category.strip(),
+                    "confidence": round(min(max(confidence, 0.1), 0.99), 2),
+                    "reason": reason,
+                    "source": "llm_free"
+                }
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def generate_email(keywords, provider=None):
+        """根据关键词生成邮件"""
+        providers = list(_load_providers_from_env().values())
+        if provider:
+            providers = [p for p in providers if p["name"] == provider or provider in str(p)]
+        if not providers:
+            return None
+
+        for p in providers:
+            protocol = p.get("protocol", "openai_compatible")
+            user_msg = f"关键词: {keywords}"
+
+            if protocol == "ernie":
+                ernie_secret = os.getenv("ERNIE_SECRET_KEY", "")
+                if not ernie_secret:
+                    continue
+                token_url = f"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id={p['api_key']}&client_secret={ernie_secret}"
+                try:
+                    token_resp = requests.get(token_url, timeout=10)
+                    if token_resp.status_code != 200:
+                        continue
+                    access_token = token_resp.json().get("access_token", "")
+                    if not access_token:
+                        continue
+                except Exception:
+                    continue
+                url = f"{p['base_url']}?access_token={access_token}"
+                body = {
+                    "messages": [
+                        {"role": "user", "content": GEN_EMAIL_PROMPT + "\n" + user_msg}
+                    ],
+                    "temperature": 0.7,
+                }
+                try:
+                    resp = requests.post(url, headers={"Content-Type": "application/json"}, json=body, timeout=30)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        reply = data.get("result", "")
+                        return LLMAgent._parse_gen_response(reply)
+                except Exception:
+                    continue
+            else:
+                url = f"{p['base_url'].rstrip('/')}{OPENAI_COMPATIBLE_API['path']}"
+                body = {
+                    "model": p["model"],
+                    "messages": [
+                        {"role": "user", "content": GEN_EMAIL_PROMPT + "\n" + user_msg}
+                    ],
+                    "temperature": 0.8,
+                    "max_tokens": 500
+                }
+                try:
+                    resp = requests.post(url, headers=OPENAI_COMPATIBLE_API["headers"](p["api_key"]), json=body, timeout=30)
+                    if resp.status_code == 200:
+                        reply = OPENAI_COMPATIBLE_API["parse"](resp)
+                        return LLMAgent._parse_gen_response(reply)
+                except Exception:
+                    continue
+        return None
+
+    @staticmethod
+    def _parse_gen_response(reply):
+        try:
+            json_start = reply.find('{')
+            json_end = reply.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                result = json.loads(reply[json_start:json_end])
+                return {
+                    "sender": result.get("sender", "unknown@example.com"),
+                    "subject": result.get("subject", "无主题"),
+                    "content": result.get("content", "无内容")
+                }
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass
+        return None
 
     @staticmethod
     def get_all_providers():

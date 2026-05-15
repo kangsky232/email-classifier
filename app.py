@@ -13,6 +13,7 @@ import time
 import csv
 import io
 import os
+from collections import Counter
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 app.secret_key = Config.SECRET_KEY
@@ -261,6 +262,100 @@ def import_emails():
         return jsonify({"success": True, "imported": imported, "errors": errors})
     except Exception as e:
         return jsonify({"error": f"解析失败: {str(e)}"}), 400
+
+@app.route('/api/emails/generate', methods=['POST'])
+def generate_email():
+    """根据关键词生成逼真邮件"""
+    data = request.get_json()
+    keywords = (data.get('keywords', '') or '').strip()
+    if not keywords:
+        return jsonify({"error": "请输入关键词"}), 400
+
+    generated = LLMAgent.generate_email(keywords)
+    if not generated:
+        return jsonify({"error": "生成失败，请先配置 LLM API Key 并启动 agent_service"}), 503
+
+    return jsonify({
+        "success": True,
+        "email": generated
+    })
+
+@app.route('/api/classify/free', methods=['POST'])
+def classify_email_free():
+    """自由分类：LLM 自主确定类别，不限固定分类列表"""
+    data = request.get_json()
+    if not data or not data.get('content'):
+        return jsonify({"error": "邮件内容不能为空"}), 400
+
+    user_id = _get_current_user()
+    email_id = Email.create(
+        sender=data.get('sender', 'unknown'),
+        subject=data.get('subject', ''),
+        content=data.get('content', ''),
+        user_id=user_id
+    )
+
+    results = []
+    for node in classifier.acceptor_nodes:
+        if node.is_available():
+            try:
+                resp = requests.post(
+                    f"{node.url}/classify-free",
+                    json={"sender": data.get('sender', ''), "subject": data.get('subject', ''), "content": data.get('content', '')},
+                    timeout=20
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    if result.get("success"):
+                        r = result["result"]
+                        entry = {
+                            "agent_name": node.name,
+                            "method": f"llm_{node.role}_free",
+                            "category": r.get("category", "未分类"),
+                            "confidence": r.get("confidence", 0.5),
+                            "details": {
+                                "reason": r.get("reason", ""),
+                                "source": r.get("source", "llm_free"),
+                                "mode": r.get("mode", "free")
+                            }
+                        }
+                        results.append(entry)
+                        Classification.create(
+                            email_id=email_id, agent_name=node.name,
+                            method=entry["method"], category=entry["category"],
+                            confidence=entry["confidence"]
+                        )
+            except Exception as e:
+                results.append({
+                    "agent_name": node.name, "method": f"llm_{node.role}_free",
+                    "category": "错误", "confidence": 0,
+                    "error": str(e)
+                })
+
+    if not results:
+        return jsonify({
+            "success": True, "email_id": email_id,
+            "final_category": "未知", "method": "llm_free",
+            "agents": [], "message": "无可用 LLM 节点，请启动 agent_service 并配置 API Key"
+        })
+
+    categories = [r["category"] for r in results if r["category"] != "错误"]
+    counter = Counter(categories) if categories else None
+
+    if counter:
+        final_category = counter.most_common(1)[0][0]
+        consensus = f"{counter[final_category]}/{len(categories)} 一致"
+    else:
+        final_category = "未知"
+        consensus = "无有效结果"
+
+    FinalResult.create(email_id, final_category, "llm_free")
+    return jsonify({
+        "success": True, "email_id": email_id,
+        "final_category": final_category, "method": "llm_free",
+        "consensus": consensus, "agents": results,
+        "message": f"自由分类完成: {final_category}"
+    })
 
 @app.route('/api/classify', methods=['POST'])
 def classify_email():
