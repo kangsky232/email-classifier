@@ -339,7 +339,9 @@ def get_agents_stats():
 
 @app.route('/api/agents/remote', methods=['GET'])
 def get_remote_agents():
-    return jsonify({"remote_agents": [a.get_stats() for a in classifier.remote_agents]})
+    nodes = [a.get_stats() for a in classifier.acceptor_nodes]
+    customs = [a.get_stats() for a in classifier.remote_agents]
+    return jsonify({"acceptor_nodes": nodes, "custom_agents": customs})
 
 @app.route('/api/agents/remote', methods=['POST'])
 def add_remote_agent():
