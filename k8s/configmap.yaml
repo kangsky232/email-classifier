@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mail-config
+  namespace: mail-classifier
+data:
+  USE_SQLITE: "false"
+  DB_HOST: mysql-service
+  DB_PORT: "3306"
+  DB_USER: root
+  DB_NAME: mail_system
+  RABBITMQ_HOST: rabbitmq-service
+  RABBITMQ_PORT: "5672"
+  ACCEPTOR_1_URL: "http://agent-1-service:8503"
+  ACCEPTOR_2_URL: "http://agent-2-service:8504"
+  ACCEPTOR_3_URL: "http://agent-3-service:8505"
+  ACCEPTOR_4_URL: "http://agent-4-service:8506"
+  LOG_LEVEL: "INFO"

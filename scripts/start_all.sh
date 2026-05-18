@@ -1,0 +1,33 @@
+#!/bin/bash
+# 启动所有服务（Linux/Mac 版本）
+
+cd "$(dirname "$0")/.."
+
+echo "========================================"
+echo "  启动邮件分类系统所有服务"
+echo "========================================"
+
+echo "[1/5] 启动 Agent LLM1 (端口 8503)..."
+python scripts/start_agent.py --role llm1 --port 8503 --id acceptor-1 &
+sleep 1
+
+echo "[2/5] 启动 Agent LLM2 (端口 8504)..."
+python scripts/start_agent.py --role llm2 --port 8504 --id acceptor-2 &
+sleep 1
+
+echo "[3/5] 启动 Agent LLM3 (端口 8505)..."
+python scripts/start_agent.py --role llm3 --port 8505 --id acceptor-3 &
+sleep 1
+
+echo "[4/5] 启动 Agent LLM4 (端口 8506)..."
+python scripts/start_agent.py --role llm4 --port 8506 --id acceptor-4 &
+sleep 1
+
+echo "[5/5] 启动 API 网关 (端口 5000)..."
+python scripts/start_gateway.py
+
+echo "========================================"
+echo "  所有服务已启动！"
+echo "  网关地址: http://localhost:5000"
+echo "  Agent 节点: 8503, 8504, 8505, 8506"
+echo "========================================"

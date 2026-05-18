@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8503-8506
+
+CMD ["sh", "-c", "python scripts/start_agent.py --role ${AGENT_ROLE} --port ${AGENT_PORT} --id ${AGENT_ID}"]

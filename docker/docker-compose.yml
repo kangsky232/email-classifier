@@ -1,0 +1,243 @@
+services:
+  # ============================================
+  # MySQL 数据库
+  # ============================================
+  mysql:
+    image: mysql:8.0
+    container_name: mail-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: mail_system
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
+    networks:
+      - mail-net
+
+  # ============================================
+  # RabbitMQ 消息队列
+  # ============================================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: mail-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
+    networks:
+      - mail-net
+
+  # ============================================
+  # Agent 节点 1 — 严格模式
+  # ============================================
+  agent-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-agent-1
+    environment:
+      AGENT_ROLE: llm1
+      AGENT_PORT: "8503"
+      AGENT_ID: acceptor-1
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    expose:
+      - "8503"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8503/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    networks:
+      - mail-net
+    restart: unless-stopped
+
+  # ============================================
+  # Agent 节点 2 — 语义分析
+  # ============================================
+  agent-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-agent-2
+    environment:
+      AGENT_ROLE: llm2
+      AGENT_PORT: "8504"
+      AGENT_ID: acceptor-2
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    expose:
+      - "8504"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8504/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    networks:
+      - mail-net
+    restart: unless-stopped
+
+  # ============================================
+  # Agent 节点 3 — 关键词驱动
+  # ============================================
+  agent-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-agent-3
+    environment:
+      AGENT_ROLE: llm3
+      AGENT_PORT: "8505"
+      AGENT_ID: acceptor-3
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    expose:
+      - "8505"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8505/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    networks:
+      - mail-net
+    restart: unless-stopped
+
+  # ============================================
+  # Agent 节点 4 — 宽松模式
+  # ============================================
+  agent-4:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.agent
+    container_name: mail-agent-4
+    environment:
+      AGENT_ROLE: llm4
+      AGENT_PORT: "8506"
+      AGENT_ID: acceptor-4
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    expose:
+      - "8506"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8506/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    networks:
+      - mail-net
+    restart: unless-stopped
+
+  # ============================================
+  # Flask 网关
+  # ============================================
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    container_name: mail-gateway
+    ports:
+      - "5000:5000"
+    environment:
+      USE_SQLITE: "false"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: mail_system
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      ACCEPTOR_1_URL: http://agent-1:8503
+      ACCEPTOR_2_URL: http://agent-2:8504
+      ACCEPTOR_3_URL: http://agent-3:8505
+      ACCEPTOR_4_URL: http://agent-4:8506
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      agent-1:
+        condition: service_started
+      agent-2:
+        condition: service_started
+      agent-3:
+        condition: service_started
+      agent-4:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    networks:
+      - mail-net
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
+networks:
+  mail-net:
+    driver: bridge

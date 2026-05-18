@@ -1,0 +1,255 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-1-service
+  namespace: mail-classifier
+spec:
+  ports:
+    - port: 8503
+      targetPort: 8503
+  selector:
+    app: agent-1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-1
+  namespace: mail-classifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-1
+  template:
+    metadata:
+      labels:
+        app: agent-1
+    spec:
+      containers:
+        - name: agent
+          image: mail-classifier/agent:latest
+          ports:
+            - containerPort: 8503
+          env:
+            - name: AGENT_ROLE
+              value: "llm1"
+            - name: AGENT_PORT
+              value: "8503"
+            - name: AGENT_ID
+              value: "acceptor-1"
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mail-secret
+                  key: DEEPSEEK_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8503
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8503
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-2-service
+  namespace: mail-classifier
+spec:
+  ports:
+    - port: 8504
+      targetPort: 8504
+  selector:
+    app: agent-2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-2
+  namespace: mail-classifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-2
+  template:
+    metadata:
+      labels:
+        app: agent-2
+    spec:
+      containers:
+        - name: agent
+          image: mail-classifier/agent:latest
+          ports:
+            - containerPort: 8504
+          env:
+            - name: AGENT_ROLE
+              value: "llm2"
+            - name: AGENT_PORT
+              value: "8504"
+            - name: AGENT_ID
+              value: "acceptor-2"
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mail-secret
+                  key: DEEPSEEK_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8504
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8504
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-3-service
+  namespace: mail-classifier
+spec:
+  ports:
+    - port: 8505
+      targetPort: 8505
+  selector:
+    app: agent-3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-3
+  namespace: mail-classifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-3
+  template:
+    metadata:
+      labels:
+        app: agent-3
+    spec:
+      containers:
+        - name: agent
+          image: mail-classifier/agent:latest
+          ports:
+            - containerPort: 8505
+          env:
+            - name: AGENT_ROLE
+              value: "llm3"
+            - name: AGENT_PORT
+              value: "8505"
+            - name: AGENT_ID
+              value: "acceptor-3"
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mail-secret
+                  key: DEEPSEEK_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8505
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8505
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-4-service
+  namespace: mail-classifier
+spec:
+  ports:
+    - port: 8506
+      targetPort: 8506
+  selector:
+    app: agent-4
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-4
+  namespace: mail-classifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-4
+  template:
+    metadata:
+      labels:
+        app: agent-4
+    spec:
+      containers:
+        - name: agent
+          image: mail-classifier/agent:latest
+          ports:
+            - containerPort: 8506
+          env:
+            - name: AGENT_ROLE
+              value: "llm4"
+            - name: AGENT_PORT
+              value: "8506"
+            - name: AGENT_ID
+              value: "acceptor-4"
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mail-secret
+                  key: DEEPSEEK_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8506
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8506
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
